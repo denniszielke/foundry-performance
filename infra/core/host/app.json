@@ -1,0 +1,156 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.43.8.12551",
+      "templateHash": "15132961734665623203"
+    }
+  },
+  "parameters": {
+    "name": {
+      "type": "string"
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]"
+    },
+    "tags": {
+      "type": "object",
+      "defaultValue": {}
+    },
+    "containerAppsEnvironmentName": {
+      "type": "string"
+    },
+    "containerName": {
+      "type": "string",
+      "defaultValue": "main"
+    },
+    "containerRegistryName": {
+      "type": "string",
+      "metadata": {
+        "description": "Bare registry name (e.g. \"myregistry\"), without .azurecr.io"
+      }
+    },
+    "external": {
+      "type": "bool",
+      "defaultValue": true
+    },
+    "imageName": {
+      "type": "string"
+    },
+    "targetPort": {
+      "type": "int",
+      "defaultValue": 80
+    },
+    "identityName": {
+      "type": "string",
+      "metadata": {
+        "description": "User assigned identity name"
+      }
+    },
+    "envJson": {
+      "type": "string",
+      "defaultValue": "[[]",
+      "metadata": {
+        "description": "JSON array of {name, value} env var objects, e.g. [{\"name\":\"KEY\",\"value\":\"VAL\"}]"
+      }
+    },
+    "containerCpuCoreCount": {
+      "type": "string",
+      "defaultValue": "1",
+      "metadata": {
+        "description": "CPU cores allocated to a single container instance, e.g. 0.5"
+      }
+    },
+    "containerMemory": {
+      "type": "string",
+      "defaultValue": "2.0Gi",
+      "metadata": {
+        "description": "Memory allocated to a single container instance, e.g. 2.0Gi"
+      }
+    }
+  },
+  "variables": {
+    "envVars": "[json(parameters('envJson'))]",
+    "acrPullRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName'))]",
+      "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('identityName')), variables('acrPullRoleDefinitionId'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('acrPullRoleDefinitionId')]",
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('identityName')), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "type": "Microsoft.App/containerApps",
+      "apiVersion": "2023-05-01",
+      "name": "[parameters('name')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "identity": {
+        "type": "UserAssigned",
+        "userAssignedIdentities": {
+          "[format('{0}', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('identityName')))]": {}
+        }
+      },
+      "properties": {
+        "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName'))]",
+        "configuration": {
+          "activeRevisionsMode": "Single",
+          "ingress": {
+            "external": "[parameters('external')]",
+            "targetPort": "[parameters('targetPort')]",
+            "transport": "auto"
+          },
+          "registries": [
+            {
+              "server": "[reference(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), '2023-07-01').loginServer]",
+              "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('identityName'))]"
+            }
+          ]
+        },
+        "template": {
+          "containers": [
+            {
+              "image": "[if(not(empty(parameters('imageName'))), parameters('imageName'), 'mcr.microsoft.com/k8se/quickstart:latest')]",
+              "name": "[parameters('containerName')]",
+              "env": "[variables('envVars')]",
+              "resources": {
+                "cpu": "[json(parameters('containerCpuCoreCount'))]",
+                "memory": "[parameters('containerMemory')]"
+              }
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[extensionResourceId(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.ContainerRegistry/registries', parameters('containerRegistryName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('identityName')), variables('acrPullRoleDefinitionId')))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "defaultDomain": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2025-07-01').defaultDomain]"
+    },
+    "imageName": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.App/containerApps', parameters('name')), '2023-05-01').template.containers[0].image]"
+    },
+    "name": {
+      "type": "string",
+      "value": "[parameters('name')]"
+    },
+    "uri": {
+      "type": "string",
+      "value": "[format('https://{0}', reference(resourceId('Microsoft.App/containerApps', parameters('name')), '2023-05-01').configuration.ingress.fqdn)]"
+    }
+  }
+}

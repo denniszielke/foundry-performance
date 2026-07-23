@@ -1,0 +1,4 @@
+# Benchmark clients — HTTP + WebSocket transports.
+
+httpx==0.28.1
+websockets==15.0.1

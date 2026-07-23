@@ -1,0 +1,25 @@
+name: foundry-performance
+metadata:
+  template: foundry-performance@0.0.1
+infra:
+  provider: bicep
+  path: ./infra
+hooks:
+  postdeploy:
+    # Copy the generated environment file to the repo root for the deploy
+    # scripts and local clients to read.
+    - shell: sh
+      run: cp .azure/$AZURE_ENV_NAME/.env ./
+    # After `azd up`, build + deploy the weather MCP server, register the
+    # toolbox, and deploy the three agent variations. These are preview
+    # Foundry operations, so they are run explicitly rather than automatically:
+    #
+    #   python -m pip install -r requirements.txt
+    #   python -m scripts.build_containers
+    #   python -m scripts.deploy_weather_mcp_server
+    #   python -m scripts.register_weather_toolbox
+    #   python -m scripts.deploy_prompt_agent
+    #   python -m scripts.deploy_hosted_agent
+    #   python -m scripts.deploy_custom_agent
+    #
+    # See README.md and AGENTS.md for the full runbook.
