@@ -45,7 +45,7 @@ param location string
 @metadata({azd: {
   type: 'location'
   usageName: [
-    'OpenAI.GlobalStandard.gpt-5.4-mini,10'
+    'OpenAI.GlobalStandard.gpt-5.4-nano,10'
   ]}
 })
 param aiDeploymentsLocation string
@@ -63,13 +63,13 @@ param aiFoundryResourceName string = ''
 param aiFoundryProjectName string = 'aiproj-${environmentName}'
 
 @description('Name of the chat model deployment to use')
-param chatModelDeploymentName string = 'gpt-5.4-mini'
+param chatModelDeploymentName string = 'gpt-5.4-nano'
 
 @description('OpenAI API version used by the hosted apps')
 param openAiApiVersion string = '2024-05-01-preview'
 
 @description('List of model deployments')
-param aiProjectDeploymentsJson string = '[{"name":"gpt-5.4-mini","model":{"name":"gpt-5.4-mini","format":"OpenAI","version":"2026-03-17"},"sku":{"name":"GlobalStandard","capacity":1000}}]'
+param aiProjectDeploymentsJson string = '[{"name":"gpt-5.4-nano","model":{"name":"gpt-5.4-nano","format":"OpenAI","version":"2026-03-17"},"sku":{"name":"GlobalStandard","capacity":100}}]'
 
 @description('List of connections')
 param aiProjectConnectionsJson string = '[]'
