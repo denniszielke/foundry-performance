@@ -1,0 +1,75 @@
+# Build context for `az acr build` is the repo root (see scripts/_helpers.py).
+# Everything listed here is stripped before the context is tarred and uploaded
+# to ACR, keeping builds fast. The biggest offenders are virtual environments,
+# which are large and host-specific. ACR's context packer needs both a directory
+# pattern and an explicit descendant pattern; a trailing slash or only a `**/`
+# prefix is insufficient.
+
+# Python virtual environments — large, host-specific, never needed in an image.
+.venv
+.venv/**
+.rvenv
+.rvenv/**
+venv
+venv/**
+env
+env/**
+ENV
+ENV/**
+**/.venv
+**/.venv/**
+**/.rvenv
+**/.rvenv/**
+**/venv
+**/venv/**
+**/env
+**/env/**
+**/ENV
+**/ENV/**
+
+# Version control & CI metadata.
+.git/
+.gitignore
+.github/
+
+# azd / Azure local state.
+.azure/
+
+# Python caches & build artifacts.
+__pycache__
+**/__pycache__
+*.py[cod]
+*.egg-info
+**/*.egg-info
+.eggs
+**/.eggs
+build
+**/build
+dist
+**/dist
+.pytest_cache
+**/.pytest_cache
+.mypy_cache
+**/.mypy_cache
+.ruff_cache
+**/.ruff_cache
+.ipynb_checkpoints
+**/.ipynb_checkpoints
+
+# Node / JS deps (none are needed by the agent images).
+node_modules
+**/node_modules
+
+# Local env files & secrets — agents read configuration from container env vars.
+.env
+*.env
+!*.env.example
+
+# Editor / OS cruft.
+.vscode
+.vscode/**
+.idea
+.idea/**
+.DS_Store
+**/.DS_Store
+*.log
