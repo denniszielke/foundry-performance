@@ -26,19 +26,24 @@ variations is *where the agent runs* and *how it reaches the tool*.
 `invocations_ws` is a Foundry public-preview feature available **only in North
 Central US**, so provision in `northcentralus`.
 
-## The three agent variations
+## The four agent variations
 
-| # | variation        | hosting                         | tool access                     | code |
-|---|------------------|---------------------------------|---------------------------------|------|
-| 1 | **prompt agent** | Foundry-native (no container)   | inline MCP tool → MCP server    | `scripts/deploy_prompt_agent.py` |
-| 2 | **hosted agent** | Foundry-hosted **container**    | **Foundry toolbox** → MCP server| `src/hosted_agent/` |
-| 3 | **custom agent** | Azure Container App (outside Foundry) | **direct** MCP URL (no toolbox) | `src/custom_agent/` |
+| # | variation                     | hosting                         | protocol(s)                          | tool access                     | code |
+|---|-------------------------------|----------------------------------|---------------------------------------|----------------------------------|------|
+| 1 | **prompt agent**              | Foundry-native (no container)    | responses                            | inline MCP tool → MCP server    | `scripts/deploy_prompt_agent.py` |
+| 2 | **hosted agent (responses)**  | Foundry-hosted **container**    | responses, a2a (fronted by Foundry)  | **Foundry toolbox** → MCP server| `src/hosted_agent_responses/` |
+| 3 | **hosted agent (invocations)**| Foundry-hosted **container**    | invocations, invocations_ws          | **Foundry toolbox** → MCP server| `src/hosted_agent_invocations/` |
+| 4 | **custom agent**              | Azure Container App (outside Foundry) | responses, invocations, invocations_ws, a2a, activity | **direct** MCP URL (no toolbox) | `src/custom_agent/` |
 
-Variations 2 and 3 run the **same** container code (Microsoft Agent Framework +
-`azure-ai-agentserver` multi-protocol host, native A2A serving). The only
-differences are the hosting plane and whether the weather tool is reached via
-the Foundry toolbox or directly. That isolates the cost of the toolbox and of
-Foundry hosting from the agent logic itself.
+Each hosted agent (2, 3) implements a **single, native** `azure-ai-agentserver`
+protocol host — no protocol composition, no shared code between the two. The
+responses variation (2) doesn't carry its own A2A server: Foundry fronts A2A
+natively for hosted agents that implement the responses protocol (see
+[enable incoming A2A](https://learn.microsoft.com/azure/foundry/agents/how-to/enable-agent-to-agent-endpoint)).
+The custom agent (4) still composes all five protocols in one container so it
+can be exercised end to end by the full benchmark client suite; comparing it to
+variations 2/3 isolates the cost of Foundry hosting and the toolbox from the
+agent logic itself.
 
 ```mermaid
 flowchart LR
@@ -47,18 +52,21 @@ flowchart LR
     end
     subgraph foundry[Foundry project]
       P[1 prompt agent]
-      H[2 hosted agent container]
+      HR[2 hosted agent - responses]
+      HI[3 hosted agent - invocations]
       T[(weather-tools toolbox)]
     end
     subgraph aca[Azure Container Apps]
-      C[3 custom agent]
+      C[4 custom agent]
       M[weather MCP server]
     end
-    B -->|5 protocols| P
-    B -->|5 protocols| H
+    B -->|responses| P
+    B -->|responses, a2a| HR
+    B -->|invocations, invocations_ws| HI
     B -->|5 protocols| C
     P -->|MCP| M
-    H -->|toolbox| T --> M
+    HR -->|toolbox| T --> M
+    HI -->|toolbox| T
     C -->|direct MCP| M
 ```
 
@@ -66,11 +74,11 @@ flowchart LR
 
 ```
 src/
-  weather_mcp_server/   FastMCP weather tools — random data, no auth
-  agent_common/         shared: runner, telemetry, multi-protocol host, a2a app
-  hosted_agent/         variation 2 entrypoint + Dockerfile (tool via toolbox)
-  custom_agent/         variation 3 entrypoint + Dockerfile (direct MCP)
-  clients/              benchmark clients (one per protocol) + run_benchmark.py
+  weather_mcp_server/     FastMCP weather tools — random data, no auth
+  hosted_agent_responses/  variation 2 — self-contained, native ResponsesAgentServerHost only; a2a fronted natively by Foundry + Dockerfile (tool via toolbox)
+  hosted_agent_invocations/ variation 3 — self-contained, native InvocationAgentServerHost only (invocations + invocations_ws) + Dockerfile (tool via toolbox)
+  custom_agent/           variation 4 — self-contained (runner, telemetry, multi-protocol host, a2a) + Dockerfile (direct MCP)
+  clients/                benchmark clients (one per protocol) + run_benchmark.py
 scripts/                build / deploy / register / cleanup scripts
 infra/                  bicep: Foundry + ACR + Container Apps + monitoring
 ```
@@ -96,12 +104,13 @@ infra/                  bicep: Foundry + ACR + Container Apps + monitoring
 2. **Deploy the tool and agents** (preview Foundry operations, run explicitly):
 
    ```bash
-   python -m scripts.build_containers            # build all images in ACR
-   python -m scripts.deploy_weather_mcp_server   # MCP server → Container App
-   python -m scripts.register_weather_toolbox    # wrap MCP server in a toolbox
-   python -m scripts.deploy_prompt_agent         # variation 1
-   python -m scripts.deploy_hosted_agent         # variation 2
-   python -m scripts.deploy_custom_agent         # variation 3
+   python -m scripts.build_containers                    # build all images in ACR
+   python -m scripts.deploy_weather_mcp_server           # MCP server → Container App
+   python -m scripts.register_weather_toolbox            # wrap MCP server in a toolbox
+   python -m scripts.deploy_prompt_agent                 # variation 1
+   python -m scripts.deploy_hosted_agent_responses       # variation 2
+   python -m scripts.deploy_hosted_agent_invocations     # variation 3
+   python -m scripts.deploy_custom_agent                 # variation 4
    ```
 
    Each script records what it created back into `.env` (URLs, agent names) for
@@ -112,14 +121,29 @@ update, troubleshoot, tear down).
 
 ## Run the benchmark
 
-The custom agent (variation 3) exposes all five protocols directly, so the
-clients exercise every transport against it:
+`--agent` picks the variation; the base URL(s) and the right auth mode are
+derived automatically from `.env` (loaded by the script itself — no need to
+`source .env` first). `--protocols` narrows to a subset (default `all`, scoped
+to whatever that variation supports — see the table above).
 
 ```bash
-python -m src.clients.run_benchmark --base-url "$WEATHER_CUSTOM_AGENT_URL"
+# 1. prompt agent — Foundry-native, responses only
+python -m src.clients.run_benchmark --agent prompt --protocols responses --iterations 5
+
+# 2. hosted agent, responses variation — responses + a2a (fronted natively by Foundry)
+python -m src.clients.run_benchmark --agent hosted-responses --protocols responses --iterations 5
+python -m src.clients.run_benchmark --agent hosted-responses --protocols a2a --iterations 5
+
+# 3. hosted agent, invocations variation — invocations + invocations_ws
+python -m src.clients.run_benchmark --agent hosted-invocations --protocols invocations,invocations_ws --iterations 5
+
+# 4. custom agent — Container App, all five protocols directly
+python -m src.clients.run_benchmark --agent custom --protocols responses --iterations 5
 ```
 
-Options:
+Other options, including pointing at an arbitrary URL directly with
+`--base-url` (bypasses `--agent`/`.env` derivation — useful for a local
+process; add `--auth entra` if that URL is still Entra ID–protected):
 
 ```bash
 python -m src.clients.run_benchmark \
@@ -141,9 +165,21 @@ invocations_ws  warm        10    0       560       540       700       118
 ...
 ```
 
-The Foundry-native variations (1 and 2) are invoked through the Foundry
-Responses endpoint via `AIProjectClient.get_openai_client(agent_name=...)`, which
-handles auth and routing. See `scripts/deploy_prompt_agent.py` for the snippet.
+The Foundry-native responses variations (1 and 2) are invoked through the
+Foundry Responses endpoint via `AIProjectClient.get_openai_client(agent_name=...)`,
+which builds `base_url` as `{AZURE_AI_PROJECT_ENDPOINT}/agents/{agent_name}/endpoint/protocols/openai`
+(see `scripts/deploy_prompt_agent.py`). The hosted invocations variation (3) is
+invoked through the analogous `.../endpoint/protocols` path for that agent
+instead — `run_benchmark.py`'s `--agent` builds both URL shapes for you.
+
+> **Auth note:** the Foundry agent endpoints above are Entra ID–protected
+> (bearer token, scope `https://ai.azure.com/.default`) — unlike the anonymous
+> MCP server/toolbox/custom-agent Container App. `--auth` defaults to `auto`,
+> which picks `entra` for `prompt`/`hosted-responses`/`hosted-invocations` and
+> `none` for `custom`, attaching a token from `DefaultAzureCredential` (the
+> same credential used by `az login`/`azd auth login`) when needed. Override
+> with `--auth entra`/`--auth none` if you need to force one or the other
+> (e.g. alongside `--base-url`).
 
 ## No authentication
 

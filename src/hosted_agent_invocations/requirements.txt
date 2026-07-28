@@ -1,0 +1,19 @@
+# Hosted weather agent — invocations protocol only (POST /invocations +
+# WebSocket /invocations_ws, both served by the same native host).
+# Microsoft Agent Framework + the native azure-ai-agentserver invocations host.
+
+agent-framework-core==1.12.1
+agent-framework-foundry==1.10.3
+
+# Native invocations protocol host (POST /invocations, WS /invocations_ws).
+azure-ai-agentserver-core==2.0.0b8
+azure-ai-agentserver-invocations==1.0.0b7
+
+# MCP client used by Agent Framework to reach the Foundry toolbox endpoint.
+# Not pulled in transitively by the pins above.
+mcp==1.28.1
+
+# Azure SDKs + telemetry
+azure-identity==1.25.3
+azure-monitor-opentelemetry==1.8.9
+python-dotenv==1.2.2

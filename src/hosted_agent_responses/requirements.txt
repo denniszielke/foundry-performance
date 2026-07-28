@@ -1,0 +1,25 @@
+# Hosted weather agent — responses protocol only.
+# Microsoft Agent Framework + the built-in agent-framework-foundry-hosting
+# ResponsesHostServer (wraps azure-ai-agentserver-responses; no custom
+# response handler needed).
+
+agent-framework-core==1.12.1
+agent-framework-foundry==1.10.3
+
+# Built-in responses protocol host (POST /responses). Pulls in
+# azure-ai-agentserver-core/-responses transitively.
+agent-framework-foundry-hosting==1.0.0b260722
+
+# MCP client used by Agent Framework to reach the Foundry toolbox endpoint.
+# Not pulled in transitively by the pins above.
+mcp==1.28.1
+
+# No a2a-sdk here: Foundry fronts A2A natively for hosted agents that
+# implement the responses protocol (enabled via
+# scripts.deploy_hosted_agent_responses's protocol_configuration.a2a). See
+# https://learn.microsoft.com/azure/foundry/agents/how-to/enable-agent-to-agent-endpoint
+
+# Azure SDKs + telemetry
+azure-identity==1.25.3
+azure-monitor-opentelemetry==1.8.9
+python-dotenv==1.2.2

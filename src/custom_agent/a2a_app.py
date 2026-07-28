@@ -1,10 +1,8 @@
-"""Native Agent-to-Agent (A2A) server for the weather agent.
+"""Native Agent-to-Agent (A2A) server for the custom weather agent.
 
-Builds a mountable Starlette app using the native ``a2a`` SDK executor model
-(``A2AStarletteApplication`` + ``AgentExecutor``), backed by the shared
-:class:`~src.agent_common.runner.WeatherAgentRunner`. This is the "native
-agent-framework hosting" path the benchmark compares against the
-``azure-ai-agentserver`` protocol hosts.
+Self-contained copy (no shared modules). Builds a mountable Starlette app using
+the native ``a2a`` SDK executor model (``A2AStarletteApplication`` +
+``AgentExecutor``), backed by :class:`.runner.WeatherAgentRunner`.
 
 ``build_a2a_app`` returns ``None`` (with a warning) if the ``a2a`` SDK is not
 installed, so a container can still serve the other protocols.
@@ -55,7 +53,7 @@ def build_a2a_app(runner: Any, public_url: str) -> Any | None:
         return None
 
     class WeatherAgentExecutor(AgentExecutor):
-        """Bridge A2A requests to the shared weather runner."""
+        """Bridge A2A requests to the weather runner."""
 
         def __init__(self, agent_runner: Any) -> None:
             self._runner = agent_runner

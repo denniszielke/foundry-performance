@@ -5,13 +5,14 @@ architecture see [README.md](README.md).
 
 ## Components and where they run
 
-| component            | runs on                     | deploy script                         | key env written |
-|----------------------|-----------------------------|---------------------------------------|-----------------|
-| weather MCP server   | Azure Container App          | `scripts.deploy_weather_mcp_server`   | `WEATHER_MCP_URL` |
-| weather toolbox      | Foundry (management plane)   | `scripts.register_weather_toolbox`    | `WEATHER_TOOLBOX_NAME`, `FOUNDRY_TOOLBOX_ENDPOINT` |
-| prompt agent (var 1) | Foundry-native              | `scripts.deploy_prompt_agent`         | `WEATHER_PROMPT_AGENT_ID` |
-| hosted agent (var 2) | Foundry-hosted container    | `scripts.deploy_hosted_agent`         | `WEATHER_HOSTED_AGENT_NAME` |
-| custom agent (var 3) | Azure Container App          | `scripts.deploy_custom_agent`         | `WEATHER_CUSTOM_AGENT_URL` |
+| component                          | runs on                     | deploy script                             | key env written |
+|------------------------------------|-----------------------------|--------------------------------------------|-----------------|
+| weather MCP server                | Azure Container App          | `scripts.deploy_weather_mcp_server`        | `WEATHER_MCP_URL` |
+| weather toolbox                   | Foundry (management plane)   | `scripts.register_weather_toolbox`         | `WEATHER_TOOLBOX_NAME`, `FOUNDRY_TOOLBOX_ENDPOINT` |
+| prompt agent (var 1)              | Foundry-native              | `scripts.deploy_prompt_agent`              | `WEATHER_PROMPT_AGENT_ID` |
+| hosted agent, responses (var 2)   | Foundry-hosted container    | `scripts.deploy_hosted_agent_responses`    | `WEATHER_HOSTED_AGENT_RESPONSES_NAME` |
+| hosted agent, invocations (var 3) | Foundry-hosted container    | `scripts.deploy_hosted_agent_invocations`  | `WEATHER_HOSTED_AGENT_INVOCATIONS_NAME` |
+| custom agent (var 4)              | Azure Container App          | `scripts.deploy_custom_agent`              | `WEATHER_CUSTOM_AGENT_URL` |
 
 All scripts are run from the repo root as `python -m scripts.<name>`, read
 `./.env`, and use `DefaultAzureCredential` / the Azure CLI login. Run
@@ -31,7 +32,8 @@ Written by `azd up` (copied to `./.env` by the `azure.yaml` postdeploy hook):
 
 Written by the deploy scripts: `WEATHER_MCP_URL`, `WEATHER_TOOLBOX_NAME`,
 `FOUNDRY_TOOLBOX_ENDPOINT`, `WEATHER_PROMPT_AGENT_ID`,
-`WEATHER_HOSTED_AGENT_NAME`, `WEATHER_CUSTOM_AGENT_URL`.
+`WEATHER_HOSTED_AGENT_RESPONSES_NAME`, `WEATHER_HOSTED_AGENT_INVOCATIONS_NAME`,
+`WEATHER_CUSTOM_AGENT_URL`.
 
 See `.env.sample` for the complete list.
 
@@ -44,26 +46,40 @@ azd provision     # re-run infra only after editing infra/*.bicep
 
 Region must be `northcentralus` while `invocations_ws` is in preview.
 `ENABLE_HOSTED_AGENTS=true` (default) creates the ACR + Foundry ACR connection
-required for the hosted agent.
+required for the hosted agents.
 
 ## Full deploy (order matters)
 
 ```bash
 pip install -r requirements.txt
 python -m scripts.build_containers
-python -m scripts.deploy_weather_mcp_server   # must precede toolbox + agents
-python -m scripts.register_weather_toolbox    # must precede the hosted agent
+python -m scripts.deploy_weather_mcp_server        # must precede toolbox + agents
+python -m scripts.register_weather_toolbox         # must precede the hosted agents
 python -m scripts.deploy_prompt_agent
-python -m scripts.deploy_hosted_agent
+python -m scripts.deploy_hosted_agent_responses
+python -m scripts.deploy_hosted_agent_invocations
 python -m scripts.deploy_custom_agent
 ```
 
 ## Common tasks
 
+### Re-grant hosted-agent permissions
+
+Both hosted agents run as the AI Services account's system-assigned identity
+(there's no per-agent Entra Agent Identity in this repo). Redundant with the
+inline grant in the deploy scripts, but useful to re-check or re-apply without
+a redeploy:
+
+```bash
+python -m scripts.grant_agent_permissions               # toolbox role + Agent 365 OtelWrite
+python -m scripts.grant_agent_permissions --skip-observability
+python -m scripts.grant_agent_permissions --skip-toolbox
+```
+
 ### Rebuild one image
 
 ```bash
-python -m scripts.build_containers            # all three, or:
+python -m scripts.build_containers            # all four, or:
 az acr build --registry "$AZURE_CONTAINER_REGISTRY_NAME" \
   --image weather-custom-agent:latest \
   --file src/custom_agent/Dockerfile .
@@ -81,21 +97,21 @@ python -m scripts.deploy_custom_agent
 
 ### Update a Foundry agent (new version)
 
-Re-running `deploy_prompt_agent` / `deploy_hosted_agent` calls
-`agents.create_version(...)` again and routes 100% of traffic to the new
-version. The hosted agent script polls until the new version is `Active` before
-switching traffic.
+Re-running `deploy_prompt_agent` / `deploy_hosted_agent_responses` /
+`deploy_hosted_agent_invocations` calls `agents.create_version(...)` again and
+routes 100% of traffic to the new version. Each hosted agent script polls
+until the new version is `Active` before switching traffic.
 
 ### Update the toolbox
 
 Re-run `register_weather_toolbox`; it deletes the existing toolbox and creates a
-fresh version pointing at the current `WEATHER_MCP_URL`. Redeploy the hosted
-agent afterward so it picks up the new `FOUNDRY_TOOLBOX_ENDPOINT`.
+fresh version pointing at the current `WEATHER_MCP_URL`. Redeploy both hosted
+agents afterward so they pick up the new `FOUNDRY_TOOLBOX_ENDPOINT`.
 
 ### Run the benchmark
 
 ```bash
-python -m src.clients.run_benchmark --base-url "$WEATHER_CUSTOM_AGENT_URL"
+python -m src.clients.run_benchmark --agent custom --protocols all
 python -m src.clients.run_benchmark --base-url http://127.0.0.1:8088 \
   --protocols responses,invocations_ws --iterations 20 --out results.json
 ```
@@ -107,7 +123,6 @@ python -m src.clients.run_benchmark --base-url http://127.0.0.1:8088 \
 WEATHER_MCP_HOST=127.0.0.1 python -m src.weather_mcp_server.server
 
 # terminal 2 — custom agent against the local MCP server
-WEATHER_TOOL_MODE=direct \
 WEATHER_MCP_URL=http://127.0.0.1:8093/mcp \
 AZURE_AI_PROJECT_ENDPOINT="$AZURE_AI_PROJECT_ENDPOINT" \
 AZURE_AI_MODEL_DEPLOYMENT_NAME="$AZURE_AI_MODEL_DEPLOYMENT_NAME" \
@@ -131,8 +146,9 @@ The agent still needs a real Foundry project + model for inference
 - **`invocations_ws` fails** — confirm the region is `northcentralus`.
 - **No traces in App Insights** — confirm
   `APPLICATIONINSIGHTS_CONNECTION_STRING` is set for the component.
-- **Protocol rejected on `deploy_hosted_agent`** — trim `PROTOCOLS` in the script
-  to what the target Foundry region supports (defaults to responses + a2a).
+- **Protocol rejected on `deploy_hosted_agent_responses` / `deploy_hosted_agent_invocations`**
+  — trim `PROTOCOLS` in the relevant script to what the target Foundry region
+  supports (defaults to responses + a2a, and invocations + invocations_ws).
 
 ## Tear down
 

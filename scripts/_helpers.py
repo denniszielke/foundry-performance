@@ -12,10 +12,13 @@ All scripts are run from the repository root, e.g.::
 
 from __future__ import annotations
 
+import argparse
+import datetime
 import json
 import os
 import subprocess
 import sys
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -101,10 +104,55 @@ def container_env_default_domain() -> str:
     )
 
 
-def acr_build(image: str, dockerfile: Path, context: Path = ROOT, *, tag: str = "latest") -> str:
-    """Build+push an image in ACR (`az acr build`). Returns the full image ref."""
+@lru_cache(maxsize=1)
+def _generated_tag() -> str:
+    """A unique, traceable image tag for this process: ``<git-sha>-<utc-ts>``.
+
+    Cached so every image built in a single run shares one tag. Falls back to a
+    bare UTC timestamp when git metadata is unavailable.
+    """
+    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d%H%M%S")
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=ROOT, text=True, capture_output=True, check=True,
+        )
+        sha = proc.stdout.strip()
+    except (subprocess.CalledProcessError, OSError):
+        sha = ""
+    return f"{sha}-{ts}" if sha else ts
+
+
+def resolve_image_tag(explicit: str | None = None) -> str:
+    """Resolve the image tag to build/deploy.
+
+    Precedence: explicit argument (e.g. ``--tag``) → ``IMAGE_TAG`` env → a unique
+    generated ``<git-sha>-<utc-ts>`` tag. Never returns ``latest`` so each build
+    is uniquely addressable and deployments are reproducible.
+    """
+    return explicit or os.getenv("IMAGE_TAG") or _generated_tag()
+
+
+def tag_from_cli(description: str = "Build and deploy a uniquely-tagged image.") -> str | None:
+    """Parse an optional ``--tag/-t`` from argv (returns ``None`` when omitted)."""
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument(
+        "--tag", "-t", default=None,
+        help="Custom image tag to build and deploy (default: IMAGE_TAG env or a generated unique tag).",
+    )
+    args, _ = parser.parse_known_args()
+    return args.tag
+
+
+def acr_build(image: str, dockerfile: Path, context: Path = ROOT, *, tag: str | None = None) -> str:
+    """Build+push an image in ACR (`az acr build`). Returns the full image ref.
+
+    ``tag`` defaults to :func:`resolve_image_tag` (a unique ``<git-sha>-<utc-ts>``
+    tag, or ``IMAGE_TAG`` when set) so images are never overwritten under
+    ``latest``.
+    """
     registry = registry_name()
-    reference = f"{image}:{tag}"
+    reference = f"{image}:{resolve_image_tag(tag)}"
     run([
         "az", "acr", "build",
         "--registry", registry,
@@ -168,4 +216,88 @@ def project_client() -> Any:
     from azure.identity import DefaultAzureCredential
 
     endpoint = env("AZURE_AI_PROJECT_ENDPOINT", required=True)
-    return AIProjectClient(endpoint=endpoint, credential=DefaultAzureCredential())
+    return AIProjectClient(endpoint=endpoint, credential=DefaultAzureCredential(), allow_preview=True)
+
+
+# --------------------------------------------------------------------------- #
+# Toolbox RBAC (hosted agent → Foundry toolbox)
+# --------------------------------------------------------------------------- #
+# "Foundry User" data-plane role. A Foundry-hosted agent runs as the AI account's
+# system-assigned identity; without this role its calls to project toolboxes are
+# rejected with HTTP 401.
+FOUNDRY_USER_ROLE_ID = "53ca6127-db72-4b80-b1b0-d745d6d5456d"
+
+
+def _account_resource_id() -> str:
+    """Resource id of the AI Services account (derived from the project id)."""
+    project_id = env("AZURE_AI_PROJECT_ID", required=True)
+    return project_id.split("/projects/", 1)[0]
+
+
+def account_principal_id() -> str:
+    """System-assigned managed identity principal id of the AI Services account.
+
+    This is the single identity every Foundry-hosted component in this repo
+    runs as (there's no per-agent Entra Agent Identity here), so it's the
+    target for both the toolbox role and the observability app role grants.
+    Returns ``""`` if the account has no system-assigned identity.
+    """
+    account_id = _account_resource_id()
+    return run(
+        ["az", "resource", "show", "--ids", account_id,
+         "--query", "identity.principalId", "-o", "tsv"],
+        capture=True,
+    )
+
+
+def ensure_toolbox_role() -> None:
+    """Grant the AI account's system-assigned identity the ``Foundry User`` role.
+
+    Idempotent. This is what lets a Foundry-hosted agent authenticate to the
+    project's toolbox MCP endpoint (otherwise the toolbox returns HTTP 401).
+    """
+    principal_id = account_principal_id()
+    if not principal_id:
+        print("  ↳ AI account has no system-assigned identity; skipping toolbox role grant")
+        return
+    _grant_toolbox_role(principal_id, "ServicePrincipal")
+    print("  ↳ toolbox role (Foundry User) ready for the account identity")
+
+
+def signed_in_user_principal_id() -> str:
+    """Object id of the currently ``az login``-ed user."""
+    return run(["az", "ad", "signed-in-user", "show", "--query", "id", "-o", "tsv"], capture=True)
+
+
+def ensure_toolbox_role_for_signed_in_user() -> None:
+    """Grant the current ``az login``-ed user the ``Foundry User`` role.
+
+    Idempotent. Lets you run a hosted-agent container's ``agent.py`` module
+    directly on your machine (``python -m src.hosted_agent_responses.agent``)
+    against the real toolbox for local testing — the deployed container runs
+    as the AI account's managed identity (see ``ensure_toolbox_role``), which
+    your local ``DefaultAzureCredential`` (via ``az login``) does not use.
+    """
+    principal_id = signed_in_user_principal_id()
+    if not principal_id:
+        print("  ↳ no signed-in az CLI user found (run `az login`); skipping toolbox role grant")
+        return
+    _grant_toolbox_role(principal_id, "User")
+    print("  ↳ toolbox role (Foundry User) ready for the signed-in user (local testing)")
+
+
+def _grant_toolbox_role(principal_id: str, principal_type: str) -> None:
+    """Idempotently assign the ``Foundry User`` role to ``principal_id`` on the AI account."""
+    account_id = _account_resource_id()
+    existing = run(
+        ["az", "role", "assignment", "list",
+         "--assignee", principal_id, "--scope", account_id,
+         "--role", FOUNDRY_USER_ROLE_ID, "--query", "[].id", "-o", "tsv"],
+        capture=True,
+    )
+    if existing:
+        return
+    run(["az", "role", "assignment", "create",
+         "--assignee-object-id", principal_id,
+         "--assignee-principal-type", principal_type,
+         "--role", FOUNDRY_USER_ROLE_ID, "--scope", account_id])

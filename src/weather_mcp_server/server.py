@@ -118,6 +118,7 @@ def get_forecast(city: str, days: int = 3) -> str:
 def main() -> None:
     """Entry point — serve the weather tools over streamable-HTTP MCP."""
     logging.basicConfig(level=os.environ.get("MCP_LOG_LEVEL", "INFO"))
+    logger.info("Starting weather MCP server — image_tag=%s", os.getenv("IMAGE_TAG", "unknown"))
     # `host_origin_protection` (DNS-rebinding guard) would reject the container's
     # non-localhost Host header; disable it when the running FastMCP supports the
     # kwarg, and fall back gracefully on versions that don't accept it.

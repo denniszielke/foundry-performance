@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import uuid
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 
@@ -56,12 +57,13 @@ class _HttpClient:
     name = "base"
     supports_ttfb = False
 
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, auth: httpx.Auth | None = None) -> None:
         self.base_url = base_url.rstrip("/")
+        self._auth = auth
         self._http: httpx.AsyncClient | None = None
 
     async def __aenter__(self):
-        self._http = httpx.AsyncClient(timeout=DEFAULT_TIMEOUT)
+        self._http = httpx.AsyncClient(timeout=DEFAULT_TIMEOUT, auth=self._auth)
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -73,6 +75,11 @@ class _HttpClient:
         assert self._http is not None, "client not entered"
         return self._http
 
+    def _foundry_params(self) -> dict[str, str]:
+        """Extra query params Foundry's agent endpoint requires (not needed by the
+        anonymous custom-agent Container App)."""
+        return {"api-version": "v1"} if self._auth is not None else {}
+
     async def call(self, timer: Timer, query: str, session_id: str | None = None) -> str:
         raise NotImplementedError
 
@@ -83,15 +90,17 @@ class ResponsesClient(_HttpClient):
     name = "responses"
     supports_ttfb = True
 
-    def __init__(self, base_url: str, model: str = "weather-agent") -> None:
-        super().__init__(base_url)
+    def __init__(self, base_url: str, model: str = "weather-agent", auth: httpx.Auth | None = None) -> None:
+        super().__init__(base_url, auth=auth)
         self.model = model
 
     async def call(self, timer: Timer, query: str, session_id: str | None = None) -> str:
-        params = {"agent_session_id": session_id} if session_id else None
+        params = self._foundry_params()
+        if session_id:
+            params["agent_session_id"] = session_id
         body = {"model": self.model, "input": query, "stream": True}
         chunks: list[str] = []
-        async with self.http.stream("POST", f"{self.base_url}/responses", json=body, params=params) as resp:
+        async with self.http.stream("POST", f"{self.base_url}/responses", json=body, params=params or None) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():
                 if not line.startswith("data:"):
@@ -116,8 +125,10 @@ class InvocationsClient(_HttpClient):
     name = "invocations"
 
     async def call(self, timer: Timer, query: str, session_id: str | None = None) -> str:
-        params = {"agent_session_id": session_id} if session_id else None
-        resp = await self.http.post(f"{self.base_url}/invocations", json={"input": query}, params=params)
+        params = self._foundry_params()
+        if session_id:
+            params["agent_session_id"] = session_id
+        resp = await self.http.post(f"{self.base_url}/invocations", json={"input": query}, params=params or None)
         resp.raise_for_status()
         return _find_text(resp.json())
 
@@ -131,16 +142,20 @@ class InvocationsWsClient(_HttpClient):
     def _ws_url(self, session_id: str | None) -> str:
         scheme = "wss" if self.base_url.startswith("https") else "ws"
         host = self.base_url.split("://", 1)[-1]
-        url = f"{scheme}://{host}/invocations_ws"
+        params = self._foundry_params()
         if session_id:
-            url += f"?agent_session_id={session_id}"
-        return url
+            params["agent_session_id"] = session_id
+        query = f"?{urlencode(params)}" if params else ""
+        return f"{scheme}://{host}/invocations_ws{query}"
 
     async def call(self, timer: Timer, query: str, session_id: str | None = None) -> str:
         import websockets
 
+        from src.clients.auth import EntraTokenAuth
+
+        headers = self._auth.header() if isinstance(self._auth, EntraTokenAuth) else None
         chunks: list[str] = []
-        async with websockets.connect(self._ws_url(session_id)) as ws:
+        async with websockets.connect(self._ws_url(session_id), additional_headers=headers) as ws:
             await ws.send(json.dumps({"type": "message", "text": query}))
             async for raw in ws:
                 evt = json.loads(raw)
@@ -175,7 +190,7 @@ class A2aClient(_HttpClient):
             "method": "message/send",
             "params": {"message": message},
         }
-        resp = await self.http.post(f"{self.base_url}/a2a", json=rpc)
+        resp = await self.http.post(f"{self.base_url}/a2a", json=rpc, params=self._foundry_params() or None)
         resp.raise_for_status()
         data = resp.json()
         if isinstance(data, dict) and data.get("error"):

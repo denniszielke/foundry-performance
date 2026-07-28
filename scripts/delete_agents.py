@@ -1,9 +1,9 @@
 """Delete the Foundry agents and toolbox created for the scenario.
 
-Removes the prompt agent, the hosted agent, and the weather toolbox. The
-Container Apps (weather MCP server + custom agent) are part of the resource
-group and are removed by ``azd down``; this script only cleans the Foundry
-management-plane objects.
+Removes the prompt agent, both hosted agent variations, and the weather
+toolbox. The Container Apps (weather MCP server + custom agent) are part of
+the resource group and are removed by ``azd down``; this script only cleans
+the Foundry management-plane objects.
 
     python -m scripts.delete_agents
 """
@@ -12,7 +12,12 @@ from __future__ import annotations
 
 from scripts._helpers import load_env, project_client
 
-AGENT_NAMES = ["weather-prompt-agent", "weather-hosted-agent"]
+AGENT_NAMES = [
+    "weather-prompt-agent",
+    "weather-hosted-agent-responses",
+    "weather-hosted-agent-invocations",
+    "weather-custom-agent",
+]
 TOOLBOX_NAMES = ["weather-tools"]
 
 

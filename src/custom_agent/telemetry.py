@@ -1,7 +1,6 @@
-"""Application Insights / OpenTelemetry instrumentation for the agents.
+"""Application Insights / OpenTelemetry instrumentation for the custom agent.
 
-Every agent variation activates tracing so all actions (agent runs, tool calls,
-protocol handling) are visible in Application Insights. Instrumentation is
+Self-contained copy for the custom agent (no shared modules). Tracing is
 best-effort: if the connection string or the optional packages are missing the
 agent still runs, just without traces.
 """
@@ -18,8 +17,7 @@ def configure_telemetry(logger_name: str = "weather_agent") -> None:
     """Wire Azure Monitor + agent-framework observability when configured.
 
     Reads ``APPLICATIONINSIGHTS_CONNECTION_STRING`` from the environment (the
-    Foundry platform injects it for hosted agents; the ACA deploy script passes
-    it for the custom container).
+    ACA deploy script passes it for the custom container).
     """
     conn = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "").strip()
     if not conn:
