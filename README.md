@@ -135,7 +135,7 @@ python -m src.clients.run_benchmark --agent hosted-responses --protocols respons
 python -m src.clients.run_benchmark --agent hosted-responses --protocols a2a --iterations 5
 
 # 3. hosted agent, invocations variation — invocations + invocations_ws
-python -m src.clients.run_benchmark --agent hosted-invocations --protocols invocations,invocations_ws --iterations 5
+python -m src.clients.run_benchmark --agent hosted-invocations --protocols invocations --iterations 5
 
 # 4. custom agent — Container App, all five protocols directly
 python -m src.clients.run_benchmark --agent custom --protocols responses --iterations 5

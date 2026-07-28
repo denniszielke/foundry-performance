@@ -286,6 +286,58 @@ def ensure_toolbox_role_for_signed_in_user() -> None:
     print("  ↳ toolbox role (Foundry User) ready for the signed-in user (local testing)")
 
 
+def managed_identity_principal_id(identity_name: str | None = None) -> str:
+    """Principal id of the repo's user-assigned managed identity (``id-*``).
+
+    This is the identity Container Apps use for ACR pull (see
+    ``AZURE_MANAGED_IDENTITY_NAME``); some agents (e.g. the custom_agent
+    container) also run their Foundry calls as this identity, so it needs the
+    same toolbox/project role as the AI account's system identity.
+    """
+    name = identity_name or env("AZURE_MANAGED_IDENTITY_NAME", required=True)
+    resource_group = env("AZURE_RESOURCE_GROUP", required=True)
+    return run(
+        ["az", "identity", "show", "--resource-group", resource_group,
+         "--name", name, "--query", "principalId", "-o", "tsv"],
+        capture=True,
+    )
+
+
+def managed_identity_client_id(identity_name: str | None = None) -> str:
+    """Client id of the repo's user-assigned managed identity (``id-*``).
+
+    A Container App with ONLY a user-assigned identity attached does not set
+    ``AZURE_CLIENT_ID`` for it automatically — ``DefaultAzureCredential``'s
+    ``ManagedIdentityCredential`` then tries to resolve a system-assigned
+    identity by default and fails with ``ManagedIdentityCredential: ... Token
+    request error: (invalid_scope) 400``. Stamp this value as the container's
+    ``AZURE_CLIENT_ID`` env var so it picks the right (user-assigned) identity.
+    """
+    name = identity_name or env("AZURE_MANAGED_IDENTITY_NAME", required=True)
+    resource_group = env("AZURE_RESOURCE_GROUP", required=True)
+    return run(
+        ["az", "identity", "show", "--resource-group", resource_group,
+         "--name", name, "--query", "clientId", "-o", "tsv"],
+        capture=True,
+    )
+
+
+def ensure_toolbox_role_for_managed_identity(identity_name: str | None = None) -> None:
+    """Grant the repo's user-assigned managed identity the ``Foundry User`` role.
+
+    Idempotent. Needed by any Container App that authenticates its own Foundry
+    calls (chat completions, toolbox MCP, etc.) as this identity rather than
+    the AI account's system-assigned identity — otherwise those calls fail
+    with 401/403 even though the container itself starts up fine.
+    """
+    principal_id = managed_identity_principal_id(identity_name)
+    if not principal_id:
+        print("  ↳ managed identity not found; skipping toolbox role grant")
+        return
+    _grant_toolbox_role(principal_id, "ServicePrincipal")
+    print("  ↳ toolbox role (Foundry User) ready for the managed identity")
+
+
 def _grant_toolbox_role(principal_id: str, principal_type: str) -> None:
     """Idempotently assign the ``Foundry User`` role to ``principal_id`` on the AI account."""
     account_id = _account_resource_id()

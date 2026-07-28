@@ -1,11 +1,10 @@
 """Deploy the hosted agent — invocations variation — a Foundry-hosted container.
 
 Builds the agent-framework container image and registers it in Foundry as a
-``HostedAgentDefinition`` implementing only the invocations protocol (plain
-``POST /invocations`` handled by the built-in
-``agent_framework_foundry_hosting.InvocationsHostServer``, plus the WebSocket
-``/invocations_ws`` route via a thin ``ws_handler`` on the same host). The
-container's weather tool is served through the **Foundry toolbox**
+``HostedAgentDefinition`` implementing only the plain ``POST /invocations``
+protocol, handled by the built-in
+``agent_framework_foundry_hosting.InvocationsHostServer``. The container's
+weather tool is served through the **Foundry toolbox**
 (``WEATHER_TOOL_MODE=toolbox``); Foundry pulls the image, runs it, and
 front-ends the invocations protocols. Records the agent name in ``.env``
 (``WEATHER_HOSTED_AGENT_INVOCATIONS_NAME``).
@@ -36,7 +35,7 @@ AGENT_NAME = "weather-hosted-agent-invocations"
 # 2.0.0 is required by the built-in agent_framework_foundry_hosting.InvocationsHostServer
 # (it reads context.call_id, only populated on protocol 2.0.0) — see the note in
 # hosted_agent_responses for the same requirement on the responses protocol.
-PROTOCOLS = [("invocations", "2.0.0"), ("invocations_ws", "2.0.0")]
+PROTOCOLS = [("invocations", "2.0.0")]
 
 
 def main(tag: str | None = None) -> None:
@@ -68,7 +67,6 @@ def main(tag: str | None = None) -> None:
         FixedRatioVersionSelectionRule,
         HostedAgentDefinition,
         InvocationsProtocolConfiguration,
-        InvocationsWsProtocolConfiguration,
         ProtocolConfiguration,
         ProtocolVersionRecord,
         VersionSelector,
@@ -114,7 +112,6 @@ def main(tag: str | None = None) -> None:
                 ),
                 protocol_configuration=ProtocolConfiguration(
                     invocations=InvocationsProtocolConfiguration(),
-                    invocations_ws=InvocationsWsProtocolConfiguration(),
                 ),
             ),
         )

@@ -3,6 +3,11 @@
 This is the "native hosting, outside Foundry" comparison point: the container
 serves every protocol itself (responses / invocations / invocations_ws / a2a /
 activity) and calls the weather MCP server **directly** (no toolbox, no auth).
+It still calls the Foundry project directly (chat completions via
+``FoundryChatClient``) as the repo's user-assigned managed identity, which
+needs the ``Foundry User`` role on the AI account — granted here via
+``ensure_toolbox_role_for_managed_identity()`` (same role/mechanism as the
+hosted agents' toolbox grant, just for a different identity).
 
 After the Container App is deployed the agent is registered in Foundry as an
 **external agent** (``ExternalAgentDefinition``) so its telemetry shows up in the
@@ -25,8 +30,10 @@ from scripts._helpers import (
     acr_build,
     container_env_default_domain,
     deploy_container_app,
+    ensure_toolbox_role_for_managed_identity,
     env,
     load_env,
+    managed_identity_client_id,
     project_client,
     save_env,
     tag_from_cli,
@@ -70,6 +77,13 @@ def register_external_agent() -> None:
 
 def main(tag: str | None = None, *, register: bool = True) -> None:
     load_env()
+
+    print("==> Granting the managed identity toolbox/project access ('Foundry User' role)")
+    try:
+        ensure_toolbox_role_for_managed_identity()
+    except Exception as exc:  # noqa: BLE001 - a missing grant must not block the deploy
+        print(f"  WARNING: role grant failed ({exc}); the agent's Foundry calls may 401/403.")
+
     image = acr_build(APP_NAME, ROOT / "src" / "custom_agent" / "Dockerfile", tag=tag)
 
     public_url = f"https://{APP_NAME}.{container_env_default_domain()}"
@@ -78,6 +92,11 @@ def main(tag: str | None = None, *, register: bool = True) -> None:
         "AZURE_AI_PROJECT_ENDPOINT": env("AZURE_AI_PROJECT_ENDPOINT", required=True),
         "AZURE_AI_MODEL_DEPLOYMENT_NAME": env("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4.1-mini"),
         "PUBLIC_BASE_URL": public_url,
+        # Only a user-assigned identity is attached to this Container App, so
+        # DefaultAzureCredential's ManagedIdentityCredential needs AZURE_CLIENT_ID
+        # to know which identity to request a token for (otherwise it tries a
+        # system-assigned lookup and fails with "invalid_scope").
+        "AZURE_CLIENT_ID": managed_identity_client_id(),
         # Stamp a stable gen_ai.agent.id so the Foundry external-agent
         # registration (otel_agent_id) can match this container's traces.
         "OTEL_AGENT_ID": OTEL_AGENT_ID,

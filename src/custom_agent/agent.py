@@ -54,7 +54,7 @@ class WeatherAgentRunner:
         self._agent_id = os.getenv("OTEL_AGENT_ID") or None
         self._stack = AsyncExitStack()
         self._agent: Any = None
-        self._threads: dict[str, Any] = {}
+        self._sessions: dict[str, Any] = {}
         self._started = False
 
     async def start(self) -> None:
@@ -87,27 +87,27 @@ class WeatherAgentRunner:
         await self._stack.aclose()
         self._started = False
 
-    def _thread(self, session_id: str | None) -> Any:
-        """Get (or lazily create) the conversation thread for a session id."""
+    def _session(self, session_id: str | None) -> Any:
+        """Get (or lazily create) the conversation session for a session id."""
         if not session_id:
-            return self._agent.get_new_thread()
-        thread = self._threads.get(session_id)
-        if thread is None:
-            thread = self._agent.get_new_thread()
-            self._threads[session_id] = thread
-        return thread
+            return self._agent.create_session()
+        session = self._sessions.get(session_id)
+        if session is None:
+            session = self._agent.create_session(session_id=session_id)
+            self._sessions[session_id] = session
+        return session
 
     async def run(self, text: str, session_id: str | None = None) -> str:
         if not self._started:
             await self.start()
-        result = await self._agent.run(text, thread=self._thread(session_id))
+        result = await self._agent.run(text, session=self._session(session_id))
         return result.text or ""
 
     async def run_stream(self, text: str, session_id: str | None = None) -> AsyncIterator[str]:
         if not self._started:
             await self.start()
-        thread = self._thread(session_id)
-        async for update in self._agent.run_stream(text, thread=thread):
+        session = self._session(session_id)
+        async for update in self._agent.run(text, stream=True, session=session):
             delta = getattr(update, "text", None)
             if delta:
                 yield delta

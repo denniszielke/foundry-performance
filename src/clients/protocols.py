@@ -120,7 +120,7 @@ class ResponsesClient(_HttpClient):
 
 
 class InvocationsClient(_HttpClient):
-    """Custom invocations protocol (``POST /invocations``, non-streaming)."""
+    """Invocations protocol (``POST /invocations``, streaming SSE)."""
 
     name = "invocations"
 
@@ -128,9 +128,22 @@ class InvocationsClient(_HttpClient):
         params = self._foundry_params()
         if session_id:
             params["agent_session_id"] = session_id
-        resp = await self.http.post(f"{self.base_url}/invocations", json={"input": query}, params=params or None)
-        resp.raise_for_status()
-        return _find_text(resp.json())
+        chunks: list[str] = []
+        async with self.http.stream(
+            "POST", f"{self.base_url}/invocations", json={"input": query}, params=params or None
+        ) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                try:
+                    event = json.loads(line[len("data:"):].strip())
+                except json.JSONDecodeError:
+                    continue
+                if event.get("type") == "token" and isinstance(event.get("content"), str):
+                    timer.first_byte()
+                    chunks.append(event["content"])
+        return "".join(chunks)
 
 
 class InvocationsWsClient(_HttpClient):
