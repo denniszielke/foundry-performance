@@ -2,8 +2,9 @@
 
 No container: the agent is just a model + instructions plus an inline MCP tool
 pointing straight at the weather MCP server. Foundry hosts it and exposes the
-Responses protocol. Records the agent name in ``.env``
-(``WEATHER_PROMPT_AGENT_ID``).
+Responses, A2A, and invocations protocols natively (no container needed to
+front these — Foundry translates them for any agent definition). Records the
+agent name in ``.env`` (``WEATHER_PROMPT_AGENT_ID``).
 
 Requires ``WEATHER_MCP_URL`` (run ``scripts.deploy_weather_mcp_server`` first).
 
@@ -29,8 +30,10 @@ def main() -> None:
     model = env("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4.1-mini")
 
     from azure.ai.projects.models import (
+        A2AProtocolConfiguration,
         AgentEndpointConfig,
         FixedRatioVersionSelectionRule,
+        InvocationsProtocolConfiguration,
         MCPTool,
         ProtocolConfiguration,
         PromptAgentDefinition,
@@ -60,7 +63,11 @@ def main() -> None:
                         FixedRatioVersionSelectionRule(agent_version=version.version, traffic_percentage=100),
                     ]
                 ),
-                protocol_configuration=ProtocolConfiguration(responses=ResponsesProtocolConfiguration()),
+                protocol_configuration=ProtocolConfiguration(
+                    responses=ResponsesProtocolConfiguration(),
+                    a2a=A2AProtocolConfiguration(),
+                    invocations=InvocationsProtocolConfiguration(),
+                ),
             ),
         )
         print(f"Routed 100% of traffic to version {version.version}")
@@ -69,6 +76,8 @@ def main() -> None:
     print(f"\nPrompt agent ready: {AGENT_NAME}")
     print("Invoke via the Foundry Responses API, e.g.:")
     print(f"  client.get_openai_client(agent_name='{AGENT_NAME}').responses.create(input='weather in Berlin?')")
+    print("Also exposed: A2A (.../agents/{name}/endpoint/protocols/a2a) and")
+    print("invocations (.../agents/{name}/endpoint/protocols/invocations).")
 
 
 if __name__ == "__main__":

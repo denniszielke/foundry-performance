@@ -11,7 +11,7 @@ hooks:
     - shell: sh
       run: cp .azure/$AZURE_ENV_NAME/.env ./
     # After `azd up`, build + deploy the weather MCP server, register the
-    # toolbox, and deploy the three agent variations. These are preview
+    # toolbox, and deploy the four agent variations. These are preview
     # Foundry operations, so they are run explicitly rather than automatically:
     #
     #   python -m pip install -r requirements.txt
@@ -19,7 +19,8 @@ hooks:
     #   python -m scripts.deploy_weather_mcp_server
     #   python -m scripts.register_weather_toolbox
     #   python -m scripts.deploy_prompt_agent
-    #   python -m scripts.deploy_hosted_agent
+    #   python -m scripts.deploy_hosted_agent_responses
+    #   python -m scripts.deploy_hosted_agent_invocations
     #   python -m scripts.deploy_custom_agent
     #
     # See README.md and AGENTS.md for the full runbook.

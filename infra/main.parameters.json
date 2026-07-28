@@ -21,7 +21,7 @@
       "value": "${ENABLE_HOSTED_AGENTS=true}"
     },
     "skipConnectionCreation": {
-      "value": "${SKIP_CONNECTION_CREATION=false}"
+      "value": "${SKIP_CONNECTION_CREATION=true}"
     },
     "skipRoleAssignments": {
       "value": "${SKIP_ROLE_ASSIGNMENTS=false}"

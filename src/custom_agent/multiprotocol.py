@@ -1,6 +1,7 @@
-"""Multi-protocol host that exposes one weather agent over every protocol.
+"""Multi-protocol host that exposes the custom weather agent over every protocol.
 
-A single :class:`~src.agent_common.runner.WeatherAgentRunner` is served over:
+Self-contained copy (no shared modules). A single
+:class:`.runner.WeatherAgentRunner` is served over:
 
 * **responses**       — ``POST /responses`` (OpenAI Responses, streaming SSE)
 * **invocations**     — ``POST /invocations``
@@ -23,10 +24,12 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from src.agent_common.a2a_app import build_a2a_app
-from src.agent_common.runner import WeatherAgentRunner
+from .a2a_app import build_a2a_app
+
+if TYPE_CHECKING:
+    from .agent import WeatherAgentRunner
 
 logger = logging.getLogger(__name__)
 
@@ -146,12 +149,14 @@ def build_host(runner: WeatherAgentRunner, *, public_base_url: str | None = None
     return app
 
 
-def run(mode: str | None = None) -> None:
+def run() -> None:
     """Build the runner + multi-protocol host and start serving (blocking)."""
-    from src.agent_common.telemetry import configure_telemetry
+    from .agent import WeatherAgentRunner
+    from .telemetry import configure_telemetry
 
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+    logger.info("Starting custom weather agent — image_tag=%s", os.getenv("IMAGE_TAG", "unknown"))
     configure_telemetry()
-    runner = WeatherAgentRunner(mode=mode)
+    runner = WeatherAgentRunner()
     app = build_host(runner)
     app.run()

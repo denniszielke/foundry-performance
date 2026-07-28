@@ -8,11 +8,17 @@ agent-framework-foundry==1.10.3
 # Protocol hosts (responses / invocations / invocations_ws)
 azure-ai-agentserver-core==2.0.0b8
 azure-ai-agentserver-responses==1.0.0b9
-azure-ai-agentserver-invocations==1.0.0b6
+azure-ai-agentserver-invocations==1.0.0b7
 
-# Native A2A serving. Exact pin may need adjusting to the installed SDK — the
-# AgentCard field names have drifted across a2a-sdk releases.
-a2a-sdk>=0.3.0
+# MCP client used by Agent Framework to reach the weather tool (direct MCP URL
+# or Foundry toolbox endpoint). Not pulled in transitively by the pins above.
+mcp==1.28.1
+
+# Native A2A serving. The http-server extra provides a2a.server.apps
+# (A2AStarletteApplication); without it the A2A endpoint is silently disabled.
+# Exact pin may need adjusting to the installed SDK — the AgentCard field names
+# have drifted across a2a-sdk releases.
+a2a-sdk[http-server]>=0.3.0
 
 # Azure SDKs + telemetry
 azure-identity==1.25.3

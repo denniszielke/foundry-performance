@@ -12,17 +12,22 @@ is not itself a cold-start variable when benchmarking the agents.
 
 from __future__ import annotations
 
-from scripts._helpers import ROOT, acr_build, deploy_container_app, env, load_env, save_env
+from scripts._helpers import ROOT, acr_build, deploy_container_app, env, load_env, save_env, tag_from_cli
 
 APP_NAME = "weather-mcp-server"
 PORT = 8093
 
 
-def main() -> None:
+def main(tag: str | None = None) -> None:
     load_env()
-    image = acr_build(APP_NAME, ROOT / "src" / "weather_mcp_server" / "Dockerfile")
+    image = acr_build(APP_NAME, ROOT / "src" / "weather_mcp_server" / "Dockerfile", tag=tag)
 
-    container_env = {"WEATHER_MCP_HOST": "0.0.0.0", "WEATHER_MCP_PORT": str(PORT)}
+    container_env = {
+        "WEATHER_MCP_HOST": "0.0.0.0",
+        "WEATHER_MCP_PORT": str(PORT),
+        # Logged at startup so you can tell which build is actually running.
+        "IMAGE_TAG": image.rsplit(":", 1)[-1],
+    }
     conn = env("APPLICATIONINSIGHTS_CONNECTION_STRING")
     if conn:
         container_env["APPLICATIONINSIGHTS_CONNECTION_STRING"] = conn
@@ -36,9 +41,9 @@ def main() -> None:
         min_replicas=1,
     )
     mcp_url = url.rstrip("/") + "/mcp"
-    save_env({"WEATHER_MCP_URL": mcp_url})
+    save_env({"WEATHER_MCP_URL": mcp_url, "WEATHER_MCP_IMAGE": image})
     print(f"\nWeather MCP server ready: {mcp_url}")
 
 
 if __name__ == "__main__":
-    main()
+    main(tag_from_cli())

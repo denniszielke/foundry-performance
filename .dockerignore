@@ -27,8 +27,11 @@ ENV/**
 **/ENV
 **/ENV/**
 
-# Version control & CI metadata.
-.git/
+# Version control & CI metadata. The git fsmonitor daemon leaves a Unix socket
+# (.git/fsmonitor--daemon.ipc) that ACR's tar packer cannot serialize, so the
+# descendant pattern (.git/**) is required in addition to the directory entry.
+.git
+.git/**
 .gitignore
 .github/
 

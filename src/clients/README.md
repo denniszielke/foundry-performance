@@ -31,9 +31,8 @@ Phases answer the questions from the scenario:
 ## Usage
 
 ```bash
-# All protocols against the custom agent (Container App)
-python -m src.clients.run_benchmark \
-  --base-url https://weather-custom-agent.<region>.azurecontainerapps.io
+# Custom agent (Container App) — base URL + auth derived from .env
+python -m src.clients.run_benchmark --agent custom --protocols all
 
 # A subset, more iterations, save raw results
 python -m src.clients.run_benchmark \
@@ -43,5 +42,8 @@ python -m src.clients.run_benchmark \
   --out results.json
 ```
 
-Point `--base-url` at any of the three agent variations to compare hosting
-formats. Install deps with `pip install -r src/clients/requirements.txt`.
+`--agent {prompt,hosted-responses,hosted-invocations,custom}` derives the base
+URL(s) and the right `--auth` mode from `.env` (loaded automatically) — see the
+main [README](../../README.md#run-the-benchmark) for the full set of commands
+per variation. Use `--base-url` directly to bypass `.env` (e.g. a local
+process). Install deps with `pip install -r src/clients/requirements.txt`.
