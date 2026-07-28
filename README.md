@@ -128,17 +128,17 @@ to whatever that variation supports — see the table above).
 
 ```bash
 # 1. prompt agent — Foundry-native, responses only
-python -m src.clients.run_benchmark --agent prompt --protocols responses --iterations 5
+python -m src.clients.run_benchmark --agent prompt --protocols all --iterations 5
 
 # 2. hosted agent, responses variation — responses + a2a (fronted natively by Foundry)
-python -m src.clients.run_benchmark --agent hosted-responses --protocols responses --iterations 5
+python -m src.clients.run_benchmark --agent hosted-responses --protocols all --iterations 5
 python -m src.clients.run_benchmark --agent hosted-responses --protocols a2a --iterations 5
 
 # 3. hosted agent, invocations variation — invocations + invocations_ws
 python -m src.clients.run_benchmark --agent hosted-invocations --protocols invocations --iterations 5
 
 # 4. custom agent — Container App, all five protocols directly
-python -m src.clients.run_benchmark --agent custom --protocols responses --iterations 5
+python -m src.clients.run_benchmark --agent custom --protocols a2a,invocations,responses --iterations 5
 ```
 
 Other options, including pointing at an arbitrary URL directly with

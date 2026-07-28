@@ -16,6 +16,10 @@ agent-framework-foundry==1.10.3
 # azure-ai-agentserver-core/-responses transitively.
 agent-framework-foundry-hosting==1.0.0b260722
 azure-ai-agentserver-invocations==1.0.0b7
+# Native invocations AG-UI host with Toolbox MCP.
+ag-ui-protocol==0.1.16
+openai==2.32.0
+pydantic-ai-slim[ag-ui,mcp,openai]==1.75.0
 # Native A2A serving (AgentCard field names have drifted across releases).
 a2a-sdk>=0.3.0
 

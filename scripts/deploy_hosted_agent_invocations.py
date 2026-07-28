@@ -1,12 +1,10 @@
 """Deploy the hosted agent — invocations variation — a Foundry-hosted container.
 
-Builds the agent-framework container image and registers it in Foundry as a
+Builds the AG-UI/Pydantic AI container image and registers it in Foundry as a
 ``HostedAgentDefinition`` implementing only the plain ``POST /invocations``
-protocol, handled by the built-in
-``agent_framework_foundry_hosting.InvocationsHostServer``. The container's
-weather tool is served through the **Foundry toolbox**
-(``WEATHER_TOOL_MODE=toolbox``); Foundry pulls the image, runs it, and
-front-ends the invocations protocols. Records the agent name in ``.env``
+protocol, handled by the native ``InvocationAgentServerHost``. The container's
+weather tool is served through the **Foundry toolbox**. Foundry pulls the
+image, runs it, and fronts the invocations protocol. Records the agent name in ``.env``
 (``WEATHER_HOSTED_AGENT_INVOCATIONS_NAME``).
 
 Requires the weather toolbox to be registered (run
@@ -32,9 +30,7 @@ from scripts._helpers import (
 )
 
 AGENT_NAME = "weather-hosted-agent-invocations"
-# 2.0.0 is required by the built-in agent_framework_foundry_hosting.InvocationsHostServer
-# (it reads context.call_id, only populated on protocol 2.0.0) — see the note in
-# hosted_agent_responses for the same requirement on the responses protocol.
+# The AG-UI sample implements the Foundry invocations container protocol v2.0.0.
 PROTOCOLS = [("invocations", "2.0.0")]
 
 
@@ -82,7 +78,7 @@ def main(tag: str | None = None) -> None:
                 environment_variables=container_env,
                 protocol_versions=[ProtocolVersionRecord(protocol=p, version=v) for p, v in PROTOCOLS],
             ),
-            description="Weather agent (Agent Framework) hosted in Foundry, invocations protocol only.",
+            description="Weather agent (Pydantic AI AG-UI) hosted in Foundry, invocations protocol only.",
             metadata={"enableVnextExperience": "true"},
             headers={"Foundry-Features": "HostedAgents=V1Preview"},
         )

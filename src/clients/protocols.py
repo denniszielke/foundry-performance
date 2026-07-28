@@ -120,7 +120,7 @@ class ResponsesClient(_HttpClient):
 
 
 class InvocationsClient(_HttpClient):
-    """Invocations protocol (``POST /invocations``, streaming SSE)."""
+    """Native invocations protocol (``POST /invocations``, JSON)."""
 
     name = "invocations"
 
@@ -128,9 +128,40 @@ class InvocationsClient(_HttpClient):
         params = self._foundry_params()
         if session_id:
             params["agent_session_id"] = session_id
+        response = await self.http.post(
+            f"{self.base_url}/invocations", json={"input": query}, params=params or None
+        )
+        response.raise_for_status()
+        return _find_text(response.json())
+
+
+class AgUiInvocationsClient(_HttpClient):
+    """AG-UI over the invocations protocol (``POST /invocations``, SSE)."""
+
+    def __init__(self, base_url: str, auth: httpx.Auth | None = None) -> None:
+        super().__init__(base_url, auth=auth)
+        self._histories: dict[str, list[dict[str, str]]] = {}
+
+    async def call(self, timer: Timer, query: str, session_id: str | None = None) -> str:
+        params = self._foundry_params()
+        thread_id = session_id or uuid.uuid4().hex
+        history = self._histories.setdefault(thread_id, [])
+        history.append({"id": uuid.uuid4().hex, "role": "user", "content": query})
+        body = {
+            "threadId": thread_id,
+            "runId": uuid.uuid4().hex,
+            "messages": history,
+            "tools": [],
+            "context": [],
+            "state": {},
+        }
         chunks: list[str] = []
         async with self.http.stream(
-            "POST", f"{self.base_url}/invocations", json={"input": query}, params=params or None
+            "POST",
+            f"{self.base_url}/invocations",
+            json=body,
+            params=params or None,
+            headers={"Accept": "text/event-stream"},
         ) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():
@@ -140,10 +171,13 @@ class InvocationsClient(_HttpClient):
                     event = json.loads(line[len("data:"):].strip())
                 except json.JSONDecodeError:
                     continue
-                if event.get("type") == "token" and isinstance(event.get("content"), str):
+                if event.get("type") == "TEXT_MESSAGE_CONTENT" and isinstance(event.get("delta"), str):
                     timer.first_byte()
-                    chunks.append(event["content"])
-        return "".join(chunks)
+                    chunks.append(event["delta"])
+        reply = "".join(chunks)
+        if reply:
+            history.append({"id": uuid.uuid4().hex, "role": "assistant", "content": reply})
+        return reply
 
 
 class InvocationsWsClient(_HttpClient):

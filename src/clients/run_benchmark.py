@@ -42,7 +42,7 @@ from dataclasses import asdict
 import httpx
 
 from src.clients.common import Stat, Timer, Turn, format_table, summarize
-from src.clients.protocols import CLIENTS, ResponsesClient
+from src.clients.protocols import AgUiInvocationsClient, CLIENTS, ResponsesClient
 
 DEFAULT_QUERY = "What is the current weather in Berlin?"
 FOLLOWUP_QUERY = "And what about the forecast for the next three days there?"
@@ -53,7 +53,7 @@ FOLLOWUP_QUERY = "And what about the forecast for the next three days there?"
 AGENTS: dict[str, dict] = {
     "prompt": {
         "id_env": "WEATHER_PROMPT_AGENT_ID",
-        "protocols": ("responses",),
+        "protocols": ("responses", "a2a", "invocations"),
         "default_auth": "entra",
     },
     "hosted-responses": {
@@ -71,6 +71,14 @@ AGENTS: dict[str, dict] = {
         "protocols": tuple(CLIENTS),
         "default_auth": "none",
     },
+}
+
+# The hosted invocations agent deliberately implements AG-UI, whereas Foundry
+# prompt agents and the custom agent use the platform's native JSON invocation
+# contract. Keep the benchmark label as `invocations` while selecting the
+# matching transport client for each implementation.
+AGENT_PROTOCOL_CLIENTS = {
+    "hosted-invocations": {"invocations": AgUiInvocationsClient},
 }
 
 
@@ -102,9 +110,15 @@ async def _timed(client, query: str, session_id: str | None) -> tuple[Timer, str
 
 
 async def _bench_protocol(
-    name: str, base_url: str, model: str, iterations: int, query: str, auth: httpx.Auth | None
+    name: str,
+    base_url: str,
+    model: str,
+    iterations: int,
+    query: str,
+    auth: httpx.Auth | None,
+    client_cls=None,
 ) -> list[Turn]:
-    cls = CLIENTS[name]
+    cls = client_cls or CLIENTS[name]
     turns: list[Turn] = []
     make = (
         (lambda: cls(base_url, model, auth=auth)) if cls is ResponsesClient else (lambda: cls(base_url, auth=auth))
@@ -159,7 +173,8 @@ async def run(
     for name in protocols:
         url = base_url if base_url is not None else _resolve_base_url(agent, name)  # type: ignore[arg-type]
         print(f"→ benchmarking {name} ({url}) ...", flush=True)
-        turns.extend(await _bench_protocol(name, url, model, iterations, query, auth))
+        client_cls = AGENT_PROTOCOL_CLIENTS.get(agent or "", {}).get(name)
+        turns.extend(await _bench_protocol(name, url, model, iterations, query, auth, client_cls))
     return turns
 
 
