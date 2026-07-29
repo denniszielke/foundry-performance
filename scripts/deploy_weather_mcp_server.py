@@ -1,7 +1,7 @@
 """Deploy the weather MCP server as an Azure Container App (no auth).
 
 Builds the image, deploys it via the shared ``app.bicep`` module, and records
-the resulting ``/mcp`` URL in ``.env`` (``WEATHER_MCP_URL``) for the custom agent
+the resulting ``/mcp`` URL in ``.env`` (``WEATHER_MCP_URL``) for the custom agents
 and the toolbox registration.
 
 The MCP server is pinned to a single always-on replica (``minReplicas=1``) so it

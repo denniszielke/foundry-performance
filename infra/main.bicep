@@ -167,13 +167,12 @@ module containerAppsEnv 'core/host/container-apps-environment.bicep' = {
 output AZURE_AI_PROJECT_ID string = aiProject.outputs.projectId
 output AZURE_AI_PROJECT_NAME string = aiProject.outputs.projectName
 output AZURE_AI_PROJECT_ENDPOINT string = aiProject.outputs.AZURE_AI_PROJECT_ENDPOINT
-output AZURE_OPENAI_ENDPOINT string = aiProject.outputs.AZURE_OPENAI_ENDPOINT
 output APPLICATIONINSIGHTS_CONNECTION_STRING string = aiProject.outputs.APPLICATIONINSIGHTS_CONNECTION_STRING
 output AZURE_AI_MODEL_DEPLOYMENT_NAME string = chatModelDeploymentName
 output AZURE_OPENAI_CHAT_DEPLOYMENT_NAME string = chatModelDeploymentName
 output OPENAI_API_VERSION string = openAiApiVersion
 
-// ACR + Container Apps hosting (weather MCP server + custom agent)
+// ACR + Container Apps hosting (weather MCP server + custom agents)
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = aiProject.outputs.dependentResources.registry.loginServer
 output AZURE_REGISTRY string = aiProject.outputs.dependentResources.registry.loginServer
 output AZURE_CONTAINER_REGISTRY_NAME string = aiProject.outputs.dependentResources.registry.name

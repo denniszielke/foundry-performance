@@ -1,0 +1,9 @@
+{
+  "dependencies": ["./src/custom_agent_langchain"],
+  "graphs": {
+    "weather-agent": "./src/custom_agent_langchain/agent.py:build_graph"
+  },
+  "http": {
+    "app": "./src/custom_agent_langchain/agent.py:app"
+  }
+}

@@ -14,7 +14,9 @@ request against a follow-up.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 import uuid
 from typing import Any
 from urllib.parse import urlencode
@@ -24,6 +26,8 @@ import httpx
 from src.clients.common import Timer
 
 DEFAULT_TIMEOUT = httpx.Timeout(120.0)
+A2A_TASK_TIMEOUT_SECONDS = 120.0
+A2A_POLL_INTERVAL_SECONDS = 0.25
 
 
 def _find_text(obj: Any) -> str:
@@ -77,7 +81,7 @@ class _HttpClient:
 
     def _foundry_params(self) -> dict[str, str]:
         """Extra query params Foundry's agent endpoint requires (not needed by the
-        anonymous custom-agent Container App)."""
+        anonymous custom Container Apps)."""
         return {"api-version": "v1"} if self._auth is not None else {}
 
     async def call(self, timer: Timer, query: str, session_id: str | None = None) -> str:
@@ -112,11 +116,17 @@ class ResponsesClient(_HttpClient):
                     obj = json.loads(payload)
                 except json.JSONDecodeError:
                     continue
+                if isinstance(obj, dict) and obj.get("type") == "response.failed":
+                    error = obj.get("response", {}).get("error") or obj.get("error") or obj
+                    raise RuntimeError(f"Responses API failed: {error}")
                 delta = obj.get("delta") if isinstance(obj, dict) else None
                 if isinstance(delta, str) and delta:
                     timer.first_byte()
                     chunks.append(delta)
-        return "".join(chunks)
+        text = "".join(chunks)
+        if not text:
+            raise RuntimeError("Responses API completed without assistant text")
+        return text
 
 
 class InvocationsClient(_HttpClient):
@@ -129,10 +139,13 @@ class InvocationsClient(_HttpClient):
         if session_id:
             params["agent_session_id"] = session_id
         response = await self.http.post(
-            f"{self.base_url}/invocations", json={"input": query}, params=params or None
+            f"{self.base_url}/invocations", json={"message": query}, params=params or None
         )
         response.raise_for_status()
-        return _find_text(response.json())
+        try:
+            return _find_text(response.json())
+        except json.JSONDecodeError:
+            return response.text
 
 
 class AgUiInvocationsClient(_HttpClient):
@@ -221,6 +234,7 @@ class A2aClient(_HttpClient):
     """Native A2A JSON-RPC (``POST /a2a``, ``message/send``)."""
 
     name = "a2a"
+    endpoint_path = "/a2a"
 
     async def call(self, timer: Timer, query: str, session_id: str | None = None) -> str:
         message: dict[str, Any] = {
@@ -237,30 +251,62 @@ class A2aClient(_HttpClient):
             "method": "message/send",
             "params": {"message": message},
         }
-        resp = await self.http.post(f"{self.base_url}/a2a", json=rpc, params=self._foundry_params() or None)
+        resp = await self.http.post(
+            f"{self.base_url}{self.endpoint_path}",
+            json=rpc,
+            params=self._foundry_params() or None,
+        )
         resp.raise_for_status()
         data = resp.json()
         if isinstance(data, dict) and data.get("error"):
             raise RuntimeError(str(data["error"]))
-        return _find_text(data.get("result") if isinstance(data, dict) else data)
+        result = data.get("result") if isinstance(data, dict) else data
+        deadline = time.monotonic() + A2A_TASK_TIMEOUT_SECONDS
+        while isinstance(result, dict) and result.get("kind") == "task":
+            status = result.get("status")
+            state = status.get("state") if isinstance(status, dict) else None
+            if state in {"failed", "rejected", "canceled"}:
+                raise RuntimeError(f"A2A task {state}: {_find_text(status) or status}")
+            if state in {"input-required", "auth-required"}:
+                raise RuntimeError(f"A2A task requires interaction ({state}): {_find_text(status) or status}")
+            if state == "completed":
+                break
+
+            task_id = result.get("id")
+            if not isinstance(task_id, str) or not task_id:
+                raise RuntimeError(f"A2A task has no id: {result}")
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"A2A task {task_id} did not complete within {A2A_TASK_TIMEOUT_SECONDS:g}s")
+
+            await asyncio.sleep(A2A_POLL_INTERVAL_SECONDS)
+            poll_rpc = {
+                "jsonrpc": "2.0",
+                "id": uuid.uuid4().hex,
+                "method": "tasks/get",
+                "params": {"id": task_id},
+            }
+            poll_resp = await self.http.post(
+                f"{self.base_url}{self.endpoint_path}",
+                json=poll_rpc,
+                params=self._foundry_params() or None,
+            )
+            poll_resp.raise_for_status()
+            poll_data = poll_resp.json()
+            if isinstance(poll_data, dict) and poll_data.get("error"):
+                raise RuntimeError(str(poll_data["error"]))
+            result = poll_data.get("result") if isinstance(poll_data, dict) else poll_data
+
+        text = _find_text(result)
+        if not text:
+            raise RuntimeError("A2A completed without assistant text")
+        return text
 
 
-class ActivityClient(_HttpClient):
-    """Bot Framework Activity protocol (``POST /activity/messages``)."""
+class LangGraphA2aClient(A2aClient):
+    """A2A client for LangGraph Agent Server's assistant-scoped endpoint."""
 
-    name = "activity"
-
-    async def call(self, timer: Timer, query: str, session_id: str | None = None) -> str:
-        activity = {
-            "type": "message",
-            "text": query,
-            "id": uuid.uuid4().hex,
-            "from": {"id": "benchmark-user"},
-            "conversation": {"id": session_id or uuid.uuid4().hex},
-        }
-        resp = await self.http.post(f"{self.base_url}/activity/messages", json=activity)
-        resp.raise_for_status()
-        return _find_text(resp.json())
+    _graph_namespace = uuid.UUID("6ba7b821-9dad-11d1-80b4-00c04fd430c8")
+    endpoint_path = f"/a2a/{uuid.uuid5(_graph_namespace, 'weather-agent')}"
 
 
 CLIENTS: dict[str, type[_HttpClient]] = {
@@ -268,5 +314,4 @@ CLIENTS: dict[str, type[_HttpClient]] = {
     InvocationsClient.name: InvocationsClient,
     InvocationsWsClient.name: InvocationsWsClient,
     A2aClient.name: A2aClient,
-    ActivityClient.name: ActivityClient,
 }

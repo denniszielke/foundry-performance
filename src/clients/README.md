@@ -10,8 +10,7 @@ transport; the runner drives them and reports a comparison table.
 | `responses`      | HTTP + SSE           | `POST /responses`              | yes            |
 | `invocations`    | HTTP                 | `POST /invocations`            | no             |
 | `invocations_ws` | WebSocket            | `/invocations_ws`              | yes            |
-| `a2a`            | HTTP (JSON-RPC)      | `POST /a2a`                    | no             |
-| `activity`       | HTTP                 | `POST /activity/messages`      | no             |
+| `a2a`            | HTTP (JSON-RPC)      | `POST /a2a` or `/a2a/{assistant_id}` | no          |
 
 ## Metrics
 
@@ -31,18 +30,38 @@ Phases answer the questions from the scenario:
 ## Usage
 
 ```bash
-# Custom agent (Container App) — base URL + auth derived from .env
-python -m src.clients.run_benchmark --agent custom --protocols all
+# Custom MAF agent (Container App) — base URL + auth derived from .env
+python -m src.clients.run_benchmark \
+  --agent custom-maf \
+  --protocols all \
+  --model-hosting openai
 
 # A subset, more iterations, save raw results
 python -m src.clients.run_benchmark \
   --base-url http://127.0.0.1:8088 \
   --protocols responses,invocations_ws \
+  --model-hosting foundry \
   --iterations 20 \
   --out results.json
 ```
 
-`--agent {prompt,hosted-responses,hosted-invocations,custom}` derives the base
+`--model-hosting {foundry,openai}` is mandatory. Every run writes a timestamped
+JSON artifact under `results/` unless `--out` overrides the path. Its `results`
+array provides comparison-ready rows by protocol and phase, while `turns`
+retains the raw measurements and errors.
+
+Generate a self-contained interactive dashboard from every benchmark artifact:
+
+```bash
+python -m scripts.generate_benchmark_dashboard
+```
+
+The default output is `results/benchmark-dashboard.html`. Use `--results-dir`,
+`--pattern`, or `--out` to select another source folder, filename glob, or
+destination. The generated page embeds the current results and can also import
+additional benchmark JSON files through its file picker or drag and drop.
+
+`--agent {prompt,hosted-responses,hosted-invocations,custom-maf,custom-langchain}` derives the base
 URL(s) and the right `--auth` mode from `.env` (loaded automatically) — see the
 main [README](../../README.md#run-the-benchmark) for the full set of commands
 per variation. Use `--base-url` directly to bypass `.env` (e.g. a local

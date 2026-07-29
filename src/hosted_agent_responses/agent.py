@@ -27,7 +27,8 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Callable
+from typing import Any, Callable
+from urllib.parse import urlparse
 
 import httpx
 from agent_framework import MCPStreamableHTTPTool
@@ -41,8 +42,25 @@ INSTRUCTIONS = (
     "You are a helpful weather assistant. Answer questions about the current "
     "weather and forecast for a city using the available weather tools. Call "
     "list_cities if you are unsure which cities are available. Always call a "
-    "tool for real data instead of guessing, and keep answers short."
+    "tool for real data instead of guessing. Format current-weather answers exactly as: "
+    "{\"city\":\"<city>\"}In **<city>, <country>**, it's currently **<temperature>°C** "
+    "(feels like **<feels_like>°C**) with **<condition>**.\n"
+    "**Humidity:** <humidity>% • **Wind:** <wind> kph • **Precipitation:** <precipitation> mm. "
+    "Format forecast answers as: {\"city\":\"<city>\",\"days\":<days>}"
+    "**<city>, <country> — next <days> days:** followed by exactly one line per day: "
+    "- **<date>:** <condition>, **<temperature>°C** (feels like **<feels_like>°C**), "
+    "humidity **<humidity>%**, wind **<wind> kph**, precipitation **<precipitation> mm**. "
+    "Do not add an introduction, conclusion, raw tool output, or other commentary."
 )
+
+FOUNDRY_SCOPE = "https://ai.azure.com/.default"
+
+
+def _endpoint_type() -> str:
+    endpoint_type = os.getenv("AZURE_AI_ENDPOINT_TYPE", "foundry").strip().lower()
+    if endpoint_type not in {"foundry", "openai"}:
+        raise RuntimeError("AZURE_AI_ENDPOINT_TYPE must be 'foundry' or 'openai'.")
+    return endpoint_type
 
 
 def _project_endpoint() -> str:
@@ -51,6 +69,41 @@ def _project_endpoint() -> str:
     if not endpoint:
         raise RuntimeError("Set AZURE_AI_PROJECT_ENDPOINT (or FOUNDRY_PROJECT_ENDPOINT).")
     return endpoint.rstrip("/")
+
+
+def _openai_endpoint() -> str:
+    parsed = urlparse(_project_endpoint())
+    suffix = ".services.ai.azure.com"
+    if not parsed.hostname or not parsed.hostname.endswith(suffix):
+        raise RuntimeError("AZURE_AI_PROJECT_ENDPOINT must use a *.services.ai.azure.com host.")
+    resource = parsed.hostname[: -len(suffix)]
+    return f"{parsed.scheme}://{resource}.openai.azure.com"
+
+
+def _model_name() -> str:
+    return (
+        os.getenv("FOUNDRY_MODEL")
+        or os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME")
+        or os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME")
+        or "gpt-4.1-mini"
+    )
+
+
+def _build_chat_client(credential: DefaultAzureCredential) -> Any:
+    if _endpoint_type() == "openai":
+        from agent_framework.openai import OpenAIChatClient
+
+        return OpenAIChatClient(
+            model=_model_name(),
+            azure_endpoint=_openai_endpoint(),
+            credential=credential,
+            api_version=os.getenv("AZURE_OPENAI_API_VERSION") or None,
+        )
+    return FoundryChatClient(
+        project_endpoint=_project_endpoint(),
+        model=_model_name(),
+        credential=credential,
+    )
 
 
 def _toolbox_url() -> str:
@@ -74,7 +127,7 @@ class _ToolboxAuth(httpx.Auth):
 
 
 _credential = DefaultAzureCredential()
-_token_provider = get_bearer_token_provider(_credential, "https://ai.azure.com/.default")
+_token_provider = get_bearer_token_provider(_credential, FOUNDRY_SCOPE)
 
 # The MCP tool and agent are plain module-level objects — ``ResponsesHostServer``
 # lazily enters the agent's (and therefore the MCP tool's) async context on the
@@ -93,11 +146,7 @@ _mcp_tool = MCPStreamableHTTPTool(
     load_prompts=False,
 )
 
-_chat_client = FoundryChatClient(
-    project_endpoint=_project_endpoint(),
-    model=os.getenv("FOUNDRY_MODEL") or os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME") or "gpt-4.1-mini",
-    credential=_credential,
-)
+_chat_client = _build_chat_client(_credential)
 
 agent = _chat_client.as_agent(
     name="weather-agent",

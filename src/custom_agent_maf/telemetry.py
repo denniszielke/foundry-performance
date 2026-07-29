@@ -1,6 +1,6 @@
-"""Application Insights / OpenTelemetry instrumentation for the custom agent.
+"""Application Insights / OpenTelemetry instrumentation for the custom MAF agent.
 
-Self-contained copy for the custom agent (no shared modules). Tracing is
+Self-contained copy for the custom MAF agent (no shared modules). Tracing is
 best-effort: if the connection string or the optional packages are missing the
 agent still runs, just without traces.
 """
@@ -13,7 +13,7 @@ import os
 logger = logging.getLogger(__name__)
 
 
-def configure_telemetry(logger_name: str = "weather_agent") -> None:
+def configure_telemetry(logger_name: str = "weather_agent_maf") -> None:
     """Wire Azure Monitor + agent-framework observability when configured.
 
     Reads ``APPLICATIONINSIGHTS_CONNECTION_STRING`` from the environment (the

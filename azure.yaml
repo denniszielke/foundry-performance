@@ -21,6 +21,6 @@ hooks:
     #   python -m scripts.deploy_prompt_agent
     #   python -m scripts.deploy_hosted_agent_responses
     #   python -m scripts.deploy_hosted_agent_invocations
-    #   python -m scripts.deploy_custom_agent
+    #   python -m scripts.deploy_custom_agent_maf
     #
     # See README.md and AGENTS.md for the full runbook.

@@ -12,7 +12,8 @@ architecture see [README.md](README.md).
 | prompt agent (var 1)              | Foundry-native              | `scripts.deploy_prompt_agent`              | `WEATHER_PROMPT_AGENT_ID` |
 | hosted agent, responses (var 2)   | Foundry-hosted container    | `scripts.deploy_hosted_agent_responses`    | `WEATHER_HOSTED_AGENT_RESPONSES_NAME` |
 | hosted agent, invocations (var 3) | Foundry-hosted container    | `scripts.deploy_hosted_agent_invocations`  | `WEATHER_HOSTED_AGENT_INVOCATIONS_NAME` |
-| custom agent (var 4)              | Azure Container App          | `scripts.deploy_custom_agent`              | `WEATHER_CUSTOM_AGENT_URL` |
+| custom MAF agent (var 4)          | Azure Container App          | `scripts.deploy_custom_agent_maf`          | `WEATHER_CUSTOM_AGENT_MAF_URL` |
+| custom LangChain agent (var 5)    | Azure Container App          | `scripts.deploy_custom_agent_langchain`    | `WEATHER_CUSTOM_AGENT_LANGCHAIN_URL` |
 
 All scripts are run from the repo root as `python -m scripts.<name>`, read
 `./.env`, and use `DefaultAzureCredential` / the Azure CLI login. Run
@@ -23,6 +24,7 @@ All scripts are run from the repo root as `python -m scripts.<name>`, read
 Written by `azd up` (copied to `./.env` by the `azure.yaml` postdeploy hook):
 
 - `AZURE_AI_PROJECT_ENDPOINT` — Foundry project endpoint (all agents + toolbox)
+- `AZURE_AI_ENDPOINT_TYPE=foundry|openai` — model inference route for all hosted/custom containers
 - `AZURE_AI_MODEL_DEPLOYMENT_NAME` — chat model deployment
 - `APPLICATIONINSIGHTS_CONNECTION_STRING` — telemetry (all components)
 - `AZURE_CONTAINER_REGISTRY_NAME` / `AZURE_CONTAINER_REGISTRY_ENDPOINT` — ACR
@@ -30,10 +32,15 @@ Written by `azd up` (copied to `./.env` by the `azure.yaml` postdeploy hook):
 - `AZURE_MANAGED_IDENTITY_NAME` — user-assigned identity (ACR pull for apps)
 - `AZURE_RESOURCE_GROUP`, `AZURE_LOCATION`
 
+Optional deployment sizing (defaults shown):
+
+- `HOSTED_AGENT_CPU=1`, `HOSTED_AGENT_MEMORY=2Gi` — Foundry-hosted containers
+- `CUSTOM_AGENT_CPU=1`, `CUSTOM_AGENT_MEMORY=2.0Gi` — custom Container App
+
 Written by the deploy scripts: `WEATHER_MCP_URL`, `WEATHER_TOOLBOX_NAME`,
 `FOUNDRY_TOOLBOX_ENDPOINT`, `WEATHER_PROMPT_AGENT_ID`,
 `WEATHER_HOSTED_AGENT_RESPONSES_NAME`, `WEATHER_HOSTED_AGENT_INVOCATIONS_NAME`,
-`WEATHER_CUSTOM_AGENT_URL`.
+`WEATHER_CUSTOM_AGENT_MAF_URL`, `WEATHER_CUSTOM_AGENT_LANGCHAIN_URL`.
 
 See `.env.sample` for the complete list.
 
@@ -58,14 +65,19 @@ python -m scripts.register_weather_toolbox         # must precede the hosted age
 python -m scripts.deploy_prompt_agent
 python -m scripts.deploy_hosted_agent_responses
 python -m scripts.deploy_hosted_agent_invocations
-python -m scripts.deploy_custom_agent
+python -m scripts.deploy_custom_agent_maf
+python -m scripts.deploy_custom_agent_langchain
 ```
+
+The LangChain container uses the in-memory LangGraph Agent Server for this
+benchmark. Its A2A endpoint is `/a2a/weather-agent`; a production standalone
+Agent Server requires the backing services and license documented by LangChain.
 
 ## Common tasks
 
 ### Re-grant hosted-agent permissions
 
-Both hosted agents run as the AI Services account's system-assigned identity
+The hosted agents run as the AI Services account's system-assigned identity
 (there's no per-agent Entra Agent Identity in this repo). Redundant with the
 inline grant in the deploy scripts, but useful to re-check or re-apply without
 a redeploy:
@@ -81,39 +93,41 @@ python -m scripts.grant_agent_permissions --skip-toolbox
 ```bash
 python -m scripts.build_containers            # all four, or:
 az acr build --registry "$AZURE_CONTAINER_REGISTRY_NAME" \
-  --image weather-custom-agent:latest \
-  --file src/custom_agent/Dockerfile .
+  --image weather-custom-agent-maf:latest \
+  --file src/custom_agent_maf/Dockerfile .
 ```
 
-### Redeploy a Container App (MCP server / custom agent)
+### Redeploy a Container App (MCP server / custom agents)
 
 Re-run the deploy script — the underlying `app.bicep` deployment is idempotent
 and rolls out a new revision:
 
 ```bash
 python -m scripts.deploy_weather_mcp_server
-python -m scripts.deploy_custom_agent
+python -m scripts.deploy_custom_agent_maf
+python -m scripts.deploy_custom_agent_langchain
 ```
 
 ### Update a Foundry agent (new version)
 
 Re-running `deploy_prompt_agent` / `deploy_hosted_agent_responses` /
 `deploy_hosted_agent_invocations` calls `agents.create_version(...)` again and
-routes 100% of traffic to the new version. Each hosted agent script polls
-until the new version is `Active` before switching traffic.
+routes 100% of traffic to the new version. Each hosted agent script polls until
+the new version is `Active` before switching traffic.
 
 ### Update the toolbox
 
 Re-run `register_weather_toolbox`; it deletes the existing toolbox and creates a
-fresh version pointing at the current `WEATHER_MCP_URL`. Redeploy both hosted
-agents afterward so they pick up the new `FOUNDRY_TOOLBOX_ENDPOINT`.
+fresh version pointing at the current `WEATHER_MCP_URL`. Redeploy the hosted
+agents afterward so they pick up the updated toolbox.
 
 ### Run the benchmark
 
 ```bash
-python -m src.clients.run_benchmark --agent custom --protocols all
+python -m src.clients.run_benchmark --agent custom-maf --protocols all --model-hosting foundry
 python -m src.clients.run_benchmark --base-url http://127.0.0.1:8088 \
-  --protocols responses,invocations_ws --iterations 20 --out results.json
+  --protocols responses,invocations_ws --model-hosting foundry \
+  --iterations 20 --out results.json
 ```
 
 ## Run locally (no Azure hosting for the container)
@@ -122,14 +136,15 @@ python -m src.clients.run_benchmark --base-url http://127.0.0.1:8088 \
 # terminal 1 — weather MCP server
 WEATHER_MCP_HOST=127.0.0.1 python -m src.weather_mcp_server.server
 
-# terminal 2 — custom agent against the local MCP server
+# terminal 2 — custom MAF agent against the local MCP server
 WEATHER_MCP_URL=http://127.0.0.1:8093/mcp \
 AZURE_AI_PROJECT_ENDPOINT="$AZURE_AI_PROJECT_ENDPOINT" \
 AZURE_AI_MODEL_DEPLOYMENT_NAME="$AZURE_AI_MODEL_DEPLOYMENT_NAME" \
-python -m src.custom_agent.agent
+python -m src.custom_agent_maf.agent
 
 # terminal 3 — benchmark
-python -m src.clients.run_benchmark --base-url http://127.0.0.1:8088
+python -m src.clients.run_benchmark --base-url http://127.0.0.1:8088 \
+  --model-hosting foundry
 ```
 
 The agent still needs a real Foundry project + model for inference

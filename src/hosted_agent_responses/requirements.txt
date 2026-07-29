@@ -5,6 +5,7 @@
 
 agent-framework-core==1.12.1
 agent-framework-foundry==1.10.3
+agent-framework-openai==1.11.0
 
 # Built-in responses protocol host (POST /responses). Pulls in
 # azure-ai-agentserver-core/-responses transitively.

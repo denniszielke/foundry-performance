@@ -21,6 +21,7 @@ import time
 from scripts._helpers import (
     ROOT,
     acr_build,
+    ensure_openai_role,
     ensure_toolbox_role,
     env,
     load_env,
@@ -36,6 +37,7 @@ PROTOCOLS = [("invocations", "2.0.0")]
 
 def main(tag: str | None = None) -> None:
     load_env()
+    endpoint_type = env("AZURE_AI_ENDPOINT_TYPE", "foundry").lower()
     image = acr_build(AGENT_NAME, ROOT / "src" / "hosted_agent_invocations" / "Dockerfile", tag=tag)
 
     # The hosted agent runs as the AI account's system-assigned identity; grant it
@@ -50,12 +52,15 @@ def main(tag: str | None = None) -> None:
     # project endpoint when FOUNDRY_TOOLBOX_ENDPOINT is absent.
     container_env = {
         "WEATHER_TOOLBOX_NAME": env("WEATHER_TOOLBOX_NAME", "weather-tools"),
+        "AZURE_AI_ENDPOINT_TYPE": endpoint_type,
         "AZURE_AI_PROJECT_ENDPOINT": env("AZURE_AI_PROJECT_ENDPOINT", required=True),
         "AZURE_AI_MODEL_DEPLOYMENT_NAME": env("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4.1-mini"),
         # Logged at startup so you can tell which build a running version is on
         # (not a reserved FOUNDRY_*/AGENT_* name, so Foundry won't override it).
         "IMAGE_TAG": image.rsplit(":", 1)[-1],
     }
+    if api_version := env("AZURE_OPENAI_API_VERSION"):
+        container_env["AZURE_OPENAI_API_VERSION"] = api_version
 
     from azure.ai.projects.models import (
         AgentEndpointConfig,
@@ -72,8 +77,8 @@ def main(tag: str | None = None) -> None:
         created = client.agents.create_version(
             agent_name=AGENT_NAME,
             definition=HostedAgentDefinition(
-                cpu="1",
-                memory="2Gi",
+                cpu=env("HOSTED_AGENT_CPU", "1"),
+                memory=env("HOSTED_AGENT_MEMORY", "2Gi"),
                 container_configuration=ContainerConfiguration(image=image),
                 environment_variables=container_env,
                 protocol_versions=[ProtocolVersionRecord(protocol=p, version=v) for p, v in PROTOCOLS],
@@ -97,6 +102,10 @@ def main(tag: str | None = None) -> None:
             time.sleep(15)
         else:
             raise SystemExit("Timed out waiting for the hosted agent to become Active.")
+
+        if endpoint_type == "openai":
+            instance_identity = getattr(current, "instance_identity", None)
+            ensure_openai_role(getattr(instance_identity, "principal_id", ""))
 
         client.agents.update_details(
             agent_name=AGENT_NAME,

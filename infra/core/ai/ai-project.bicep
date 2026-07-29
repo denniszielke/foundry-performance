@@ -227,7 +227,6 @@ module acr '../host/acr.bicep' = if (hasAcrConnection) {
 
 // Outputs
 output AZURE_AI_PROJECT_ENDPOINT string = aiAccount::project.properties.endpoints['AI Foundry API']
-output AZURE_OPENAI_ENDPOINT string = aiAccount.properties.endpoints['OpenAI Language Model Instance API']
 output aiServicesEndpoint string = aiAccount.properties.endpoint
 output accountId string = aiAccount.id
 output projectId string = aiAccount::project.id

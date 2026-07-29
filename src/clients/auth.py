@@ -2,7 +2,7 @@
 
 The prompt agent and hosted agents (responses/invocations) are exposed
 through Entra ID-protected Foundry endpoints (scope
-``https://ai.azure.com/.default``). The custom agent's Container App is
+``https://ai.azure.com/.default``). The custom agents' Container Apps are
 anonymous and needs none of this.
 """
 

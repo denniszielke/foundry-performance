@@ -1,8 +1,8 @@
-"""Deploy the custom weather agent (variation 3) as an Azure Container App.
+"""Deploy the custom MAF weather agent (variation 4) as an Azure Container App.
 
 This is the "native hosting, outside Foundry" comparison point: the container
-serves every protocol itself (responses / invocations / invocations_ws / a2a /
-activity) and calls the weather MCP server **directly** (no toolbox, no auth).
+serves every protocol itself (responses / invocations / invocations_ws / a2a)
+and calls the weather MCP server **directly** (no toolbox, no auth).
 It still calls the Foundry project directly (chat completions via
 ``FoundryChatClient``) as the repo's user-assigned managed identity, which
 needs the ``Foundry User`` role on the AI account — granted here via
@@ -13,12 +13,12 @@ After the Container App is deployed the agent is registered in Foundry as an
 **external agent** (``ExternalAgentDefinition``) so its telemetry shows up in the
 Foundry trace view. Foundry matches spans to the registration by
 ``gen_ai.agent.id == otel_agent_id``; the container stamps that same
-``OTEL_AGENT_ID`` on every span (see ``WeatherAgentRunner``).
+``OTEL_AGENT_ID`` on every span (see ``build_agent``).
 
 Requires ``WEATHER_MCP_URL`` (run ``scripts.deploy_weather_mcp_server`` first).
 
-    python -m scripts.deploy_custom_agent                # deploy + register
-    python -m scripts.deploy_custom_agent --no-register  # skip registration
+    python -m scripts.deploy_custom_agent_maf                # deploy + register
+    python -m scripts.deploy_custom_agent_maf --no-register  # skip registration
 """
 
 from __future__ import annotations
@@ -39,14 +39,14 @@ from scripts._helpers import (
     tag_from_cli,
 )
 
-APP_NAME = "weather-custom-agent"
+APP_NAME = "weather-custom-agent-maf"
 PORT = 8088
 
 # External-agent identity. AGENT_NAME is the Foundry registration name and
 # OTEL_AGENT_ID is stamped on every span as gen_ai.agent.id; the registration's
 # otel_agent_id must match it. Defined once here so the container env and the
 # registration call below can't drift apart.
-AGENT_NAME = "weather-custom-agent"
+AGENT_NAME = "weather-custom-agent-maf"
 OTEL_AGENT_ID = f"{AGENT_NAME}-v1"
 
 
@@ -65,18 +65,19 @@ def register_external_agent() -> None:
         with project_client() as client:
             agent = client.agents.create_version(
                 agent_name=AGENT_NAME,
-                description="Custom weather agent (Agent Framework) hosted as an Azure Container App.",
+                description="Custom MAF weather agent hosted as an Azure Container App.",
                 definition=ExternalAgentDefinition(otel_agent_id=OTEL_AGENT_ID),
             )
         print(f"Registered external agent: {agent.name} (version {agent.version})")
         print(f"Resolved otel_agent_id: {agent.definition.otel_agent_id}")
-        save_env({"WEATHER_CUSTOM_AGENT_NAME": AGENT_NAME})
+        save_env({"WEATHER_CUSTOM_AGENT_MAF_NAME": AGENT_NAME})
     except Exception as exc:  # noqa: BLE001 - registration must not fail the deploy
         print(f"WARNING: external-agent registration failed ({exc}); deployment is unaffected.")
 
 
 def main(tag: str | None = None, *, register: bool = True) -> None:
     load_env()
+    endpoint_type = env("AZURE_AI_ENDPOINT_TYPE", "foundry").lower()
 
     print("==> Granting the managed identity toolbox/project access ('Foundry User' role)")
     try:
@@ -84,11 +85,12 @@ def main(tag: str | None = None, *, register: bool = True) -> None:
     except Exception as exc:  # noqa: BLE001 - a missing grant must not block the deploy
         print(f"  WARNING: role grant failed ({exc}); the agent's Foundry calls may 401/403.")
 
-    image = acr_build(APP_NAME, ROOT / "src" / "custom_agent" / "Dockerfile", tag=tag)
+    image = acr_build(APP_NAME, ROOT / "src" / "custom_agent_maf" / "Dockerfile", tag=tag)
 
     public_url = f"https://{APP_NAME}.{container_env_default_domain()}"
     container_env = {
         "WEATHER_MCP_URL": env("WEATHER_MCP_URL", required=True),
+        "AZURE_AI_ENDPOINT_TYPE": endpoint_type,
         "AZURE_AI_PROJECT_ENDPOINT": env("AZURE_AI_PROJECT_ENDPOINT", required=True),
         "AZURE_AI_MODEL_DEPLOYMENT_NAME": env("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4.1-mini"),
         "PUBLIC_BASE_URL": public_url,
@@ -103,6 +105,8 @@ def main(tag: str | None = None, *, register: bool = True) -> None:
         # Logged at startup so you can tell which build is actually running.
         "IMAGE_TAG": image.rsplit(":", 1)[-1],
     }
+    if api_version := env("AZURE_OPENAI_API_VERSION"):
+        container_env["AZURE_OPENAI_API_VERSION"] = api_version
     conn = env("APPLICATIONINSIGHTS_CONNECTION_STRING")
     if conn:
         container_env["APPLICATIONINSIGHTS_CONNECTION_STRING"] = conn
@@ -112,16 +116,18 @@ def main(tag: str | None = None, *, register: bool = True) -> None:
         image,
         target_port=PORT,
         env_vars=container_env,
+        cpu=env("CUSTOM_AGENT_CPU", "1"),
+        memory=env("CUSTOM_AGENT_MEMORY", "2.0Gi"),
         readiness_path="/readiness",
     )
-    save_env({"WEATHER_CUSTOM_AGENT_URL": url, "WEATHER_CUSTOM_AGENT_IMAGE": image})
+    save_env({"WEATHER_CUSTOM_AGENT_MAF_URL": url, "WEATHER_CUSTOM_AGENT_MAF_IMAGE": image})
 
     if register:
         register_external_agent()
 
-    print(f"\nCustom agent ready: {url}")
+    print(f"\nCustom MAF agent ready: {url}")
     print("Benchmark it with:")
-    print(f"  python -m src.clients.run_benchmark --base-url {url}")
+    print("  python -m src.clients.run_benchmark --agent custom-maf")
 
 
 if __name__ == "__main__":

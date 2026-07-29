@@ -1,17 +1,16 @@
-# All service dependencies for local development + the deploy scripts.
-# Per-service requirements (src/*/requirements.txt) mirror the relevant subset.
-# Only packages imported by the code are listed.
+# Shared local-development and deployment dependencies. Container-only packages
+# with conflicting transitive versions stay in src/*/requirements.txt.
 
 # --- Weather MCP server (src/weather_mcp_server) ---------------------------
 fastmcp==3.4.5
 mcp==1.28.1
-starlette==1.3.1
 uvicorn==0.51.0
 
-# --- Weather agents (src/hosted_agent_responses, src/hosted_agent_invocations, src/custom_agent) ---
+# --- Weather agents (src/hosted_agent_responses, src/hosted_agent_invocations, src/custom_agent_maf) ---
 # Microsoft Agent Framework + azure-ai-agentserver protocol hosts.
 agent-framework-core==1.12.1
 agent-framework-foundry==1.10.3
+agent-framework-openai==1.11.0
 # Built-in ResponsesHostServer (hosted_agent_responses); pulls in
 # azure-ai-agentserver-core/-responses transitively.
 agent-framework-foundry-hosting==1.0.0b260722

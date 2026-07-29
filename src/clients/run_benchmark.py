@@ -2,7 +2,7 @@
 
 Drives one or more protocols against a running agent endpoint and reports
 latency, time-to-first-token (TTFB) and cold-vs-warm-vs-followup behaviour so
-the four agent variations can be compared apples-to-apples.
+the five agent variations can be compared apples-to-apples.
 
 ``.env`` (repo root) is loaded automatically, so ``--agent`` alone is enough to
 target any deployed variation — no need to construct a ``--base-url`` by hand
@@ -12,16 +12,19 @@ Examples
 --------
 Hosted agent, responses variation (base URL + auth derived from ``.env``)::
 
-    python -m src.clients.run_benchmark --agent hosted-responses --protocols responses
+    python -m src.clients.run_benchmark --agent hosted-responses \
+        --protocols responses --model-hosting foundry
 
-Custom agent (Container App, anonymous), all protocols::
+Custom MAF agent (Container App, anonymous), all protocols::
 
-    python -m src.clients.run_benchmark --agent custom --protocols all
+    python -m src.clients.run_benchmark --agent custom-maf \
+        --protocols all --model-hosting openai
 
 Point at an arbitrary URL instead (e.g. a local process)::
 
     python -m src.clients.run_benchmark --base-url http://127.0.0.1:8088 \
-        --protocols responses,invocations_ws --iterations 20 --out results.json
+        --protocols responses,invocations_ws --model-hosting foundry \
+        --iterations 20 --out results.json
 
 Phases
 ------
@@ -34,18 +37,22 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import math
 import json
 import os
 import uuid
 from dataclasses import asdict
+from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 
 from src.clients.common import Stat, Timer, Turn, format_table, summarize
-from src.clients.protocols import AgUiInvocationsClient, CLIENTS, ResponsesClient
+from src.clients.protocols import AgUiInvocationsClient, CLIENTS, LangGraphA2aClient, ResponsesClient
 
 DEFAULT_QUERY = "What is the current weather in Berlin?"
 FOLLOWUP_QUERY = "And what about the forecast for the next three days there?"
+RESULTS_DIR = Path("results")
 
 # One entry per `scripts.deploy_*` variation. `id_env`/`url_env` name the .env
 # var that script writes; base URLs and auth are derived from these, not
@@ -66,19 +73,25 @@ AGENTS: dict[str, dict] = {
         "protocols": ("invocations", "invocations_ws"),
         "default_auth": "entra",
     },
-    "custom": {
-        "url_env": "WEATHER_CUSTOM_AGENT_URL",
+    "custom-langchain": {
+        "url_env": "WEATHER_CUSTOM_AGENT_LANGCHAIN_URL",
+        "protocols": ("responses", "a2a"),
+        "default_auth": "none",
+    },
+    "custom-maf": {
+        "url_env": "WEATHER_CUSTOM_AGENT_MAF_URL",
         "protocols": tuple(CLIENTS),
         "default_auth": "none",
     },
 }
 
 # The hosted invocations agent deliberately implements AG-UI, whereas Foundry
-# prompt agents and the custom agent use the platform's native JSON invocation
+# prompt agents and the custom MAF agent use the platform's native JSON invocation
 # contract. Keep the benchmark label as `invocations` while selecting the
 # matching transport client for each implementation.
 AGENT_PROTOCOL_CLIENTS = {
     "hosted-invocations": {"invocations": AgUiInvocationsClient},
+    "custom-langchain": {"a2a": LangGraphA2aClient},
 }
 
 
@@ -92,8 +105,8 @@ def _require_env(name: str, hint: str) -> str:
 def _resolve_base_url(agent: str, protocol: str) -> str:
     """Build the base URL for one (agent, protocol) pair from env vars."""
     cfg = AGENTS[agent]
-    if agent == "custom":
-        return _require_env(cfg["url_env"], "run `python -m scripts.deploy_custom_agent`")
+    if "url_env" in cfg:
+        return _require_env(cfg["url_env"], f"run the deploy script for '{agent}'")
 
     endpoint = _require_env("AZURE_AI_PROJECT_ENDPOINT", "run `azd up`")
     agent_id = _require_env(cfg["id_env"], f"run the matching `python -m scripts.deploy_*` for '{agent}'")
@@ -206,8 +219,18 @@ def _parse_args() -> argparse.Namespace:
             "mismatched model with a 400."
         ),
     )
+    parser.add_argument(
+        "--model-hosting",
+        choices=["foundry", "openai"],
+        required=True,
+        help="Model inference endpoint used by the agent; recorded in the result artifact.",
+    )
     parser.add_argument("--query", default=DEFAULT_QUERY, help="Question to ask each turn.")
-    parser.add_argument("--out", default=None, help="Optional path to write raw turns + stats as JSON.")
+    parser.add_argument(
+        "--out",
+        default=None,
+        help="Result JSON path. Defaults to results/benchmark-<UTC timestamp>.json.",
+    )
     parser.add_argument(
         "--auth",
         choices=["auto", "none", "entra"],
@@ -220,6 +243,61 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     return parser.parse_args()
+
+
+def _milliseconds(seconds: float | None) -> float | None:
+    if seconds is None or not math.isfinite(seconds):
+        return None
+    return round(seconds * 1000, 3)
+
+
+def _result_payload(
+    *,
+    recorded_at: datetime,
+    agent_type: str,
+    model_hosting: str,
+    model_deployment: str,
+    iterations: int,
+    query: str,
+    base_url: str | None,
+    turns: list[Turn],
+    stats: list[Stat],
+) -> dict[str, object]:
+    recorded_at_text = recorded_at.isoformat().replace("+00:00", "Z")
+    results = [
+        {
+            "agent-type": agent_type,
+            "protocol": stat.protocol,
+            "phase": stat.phase,
+            "model-hosting": model_hosting,
+            "model-deployment": model_deployment,
+            "n": stat.count,
+            "err": stat.errors,
+            "mean-ms": _milliseconds(stat.mean_s),
+            "p50": _milliseconds(stat.p50_s),
+            "p95": _milliseconds(stat.p95_s),
+            "ttfb": _milliseconds(stat.mean_ttfb_s),
+        }
+        for stat in stats
+    ]
+    return {
+        "datetime": recorded_at_text,
+        "agent-type": agent_type,
+        "model-hosting": model_hosting,
+        "model-deployment": model_deployment,
+        "iterations": iterations,
+        "query": query,
+        "base-url": base_url,
+        "results": results,
+        "turns": [asdict(turn) for turn in turns],
+    }
+
+
+def _result_path(out: str | None, recorded_at: datetime) -> Path:
+    if out:
+        return Path(out)
+    timestamp = recorded_at.strftime("%Y%m%dT%H%M%S.%fZ")
+    return RESULTS_DIR / f"benchmark-{timestamp}.json"
 
 
 def main() -> None:
@@ -254,6 +332,7 @@ def main() -> None:
 
         auth = EntraTokenAuth()
 
+    recorded_at = datetime.now(timezone.utc)
     turns = asyncio.run(
         run(protocols, model, args.iterations, args.query, auth, agent=args.agent, base_url=args.base_url)
     )
@@ -271,17 +350,24 @@ def main() -> None:
         for error, where in seen.items():
             print(f"  [{where}] {error}")
 
-    if args.out:
-        payload = {
-            "agent": args.agent,
-            "base_url": args.base_url,
-            "iterations": args.iterations,
-            "turns": [asdict(t) for t in turns],
-            "stats": [asdict(s) for s in stats],
-        }
-        with open(args.out, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, indent=2)
-        print(f"\nWrote {len(turns)} turns to {args.out}")
+    agent_type = args.agent or "base-url"
+    payload = _result_payload(
+        recorded_at=recorded_at,
+        agent_type=agent_type,
+        model_hosting=args.model_hosting,
+        model_deployment=model,
+        iterations=args.iterations,
+        query=args.query,
+        base_url=args.base_url,
+        turns=turns,
+        stats=stats,
+    )
+    result_path = _result_path(args.out, recorded_at)
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    with result_path.open("w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2, allow_nan=False)
+        fh.write("\n")
+    print(f"\nWrote {len(turns)} turns to {result_path}")
 
 
 if __name__ == "__main__":

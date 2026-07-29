@@ -172,6 +172,8 @@ def deploy_container_app(
     *,
     target_port: int,
     env_vars: dict[str, str],
+    cpu: str = "1",
+    memory: str = "2.0Gi",
     readiness_path: str = "",
     min_replicas: int = 0,
     external: bool = True,
@@ -187,6 +189,8 @@ def deploy_container_app(
         f"containerRegistryName={registry_name()}",
         f"identityName={env('AZURE_MANAGED_IDENTITY_NAME', required=True)}",
         f"envJson={env_json}",
+        f"containerCpuCoreCount={cpu}",
+        f"containerMemory={memory}",
         f"readinessProbePath={readiness_path}",
         f"minReplicas={min_replicas}",
         f"external={'true' if external else 'false'}",
@@ -226,6 +230,7 @@ def project_client() -> Any:
 # system-assigned identity; without this role its calls to project toolboxes are
 # rejected with HTTP 401.
 FOUNDRY_USER_ROLE_ID = "53ca6127-db72-4b80-b1b0-d745d6d5456d"
+COGNITIVE_SERVICES_OPENAI_USER_ROLE_ID = "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd"
 
 
 def _account_resource_id() -> str:
@@ -264,6 +269,15 @@ def ensure_toolbox_role() -> None:
     print("  ↳ toolbox role (Foundry User) ready for the account identity")
 
 
+def ensure_openai_role(principal_id: str) -> None:
+    """Grant a hosted agent instance identity direct Azure OpenAI inference access."""
+    if not principal_id:
+        print("  ↳ hosted agent has no instance identity; skipping OpenAI role grant")
+        return
+    _grant_account_role(principal_id, "ServicePrincipal", COGNITIVE_SERVICES_OPENAI_USER_ROLE_ID)
+    print("  ↳ OpenAI role (Cognitive Services OpenAI User) ready for the hosted agent identity")
+
+
 def signed_in_user_principal_id() -> str:
     """Object id of the currently ``az login``-ed user."""
     return run(["az", "ad", "signed-in-user", "show", "--query", "id", "-o", "tsv"], capture=True)
@@ -290,7 +304,7 @@ def managed_identity_principal_id(identity_name: str | None = None) -> str:
     """Principal id of the repo's user-assigned managed identity (``id-*``).
 
     This is the identity Container Apps use for ACR pull (see
-    ``AZURE_MANAGED_IDENTITY_NAME``); some agents (e.g. the custom_agent
+    ``AZURE_MANAGED_IDENTITY_NAME``); some agents (e.g. the custom_agent_maf
     container) also run their Foundry calls as this identity, so it needs the
     same toolbox/project role as the AI account's system identity.
     """
@@ -340,11 +354,16 @@ def ensure_toolbox_role_for_managed_identity(identity_name: str | None = None) -
 
 def _grant_toolbox_role(principal_id: str, principal_type: str) -> None:
     """Idempotently assign the ``Foundry User`` role to ``principal_id`` on the AI account."""
+    _grant_account_role(principal_id, principal_type, FOUNDRY_USER_ROLE_ID)
+
+
+def _grant_account_role(principal_id: str, principal_type: str, role_id: str) -> None:
+    """Idempotently assign an RBAC role to ``principal_id`` on the AI account."""
     account_id = _account_resource_id()
     existing = run(
         ["az", "role", "assignment", "list",
          "--assignee", principal_id, "--scope", account_id,
-         "--role", FOUNDRY_USER_ROLE_ID, "--query", "[].id", "-o", "tsv"],
+         "--role", role_id, "--query", "[].id", "-o", "tsv"],
         capture=True,
     )
     if existing:
@@ -352,4 +371,4 @@ def _grant_toolbox_role(principal_id: str, principal_type: str) -> None:
     run(["az", "role", "assignment", "create",
          "--assignee-object-id", principal_id,
          "--assignee-principal-type", principal_type,
-         "--role", FOUNDRY_USER_ROLE_ID, "--scope", account_id])
+         "--role", role_id, "--scope", account_id])

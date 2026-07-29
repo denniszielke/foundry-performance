@@ -15,12 +15,12 @@ This product includes software derived from third-party projects:
   https://github.com/Azure/azure-sdk-for-python
   Copyright (c) Microsoft Corporation, licensed under the MIT License.
   The deployment scripts (scripts/) and the per-agent protocol hosts
-  (src/hosted_agent_responses/, src/hosted_agent_invocations/, src/custom_agent/)
+  (src/hosted_agent_responses/, src/hosted_agent_invocations/, src/custom_agent_maf/)
   follow patterns from the azure-ai-projects and azure-ai-agentserver samples.
 
 * Microsoft Agent Framework samples
   https://github.com/microsoft/agent-framework
   Copyright (c) Microsoft Corporation, licensed under the MIT License.
   The weather agent runners (src/hosted_agent_responses/agent.py,
-  src/hosted_agent_invocations/agent.py, src/custom_agent/runner.py)
+  src/hosted_agent_invocations/agent.py, src/custom_agent_maf/agent.py)
   follow patterns from the FoundryChatClient MCP samples.
