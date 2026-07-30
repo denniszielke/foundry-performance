@@ -71,6 +71,13 @@ def _toolbox_endpoint() -> str:
     return f"{_project_endpoint()}/toolboxes/{toolbox_name}/mcp?api-version=v1"
 
 
+def _tool_mode() -> str:
+    mode = os.getenv("WEATHER_TOOL_MODE", "direct").strip().lower()
+    if mode not in {"direct", "toolbox"}:
+        raise EnvironmentError("WEATHER_TOOL_MODE must be 'direct' or 'toolbox'.")
+    return mode
+
+
 class _ToolboxAuth(httpx.Auth):
     """Adds a fresh managed-identity token to each Toolbox MCP request."""
 
@@ -102,17 +109,22 @@ else:
     )
 model = OpenAIResponsesModel(model_deployment, provider=OpenAIProvider(openai_client=openai_client))
 
-toolbox_http_client = httpx.AsyncClient(
-    auth=_ToolboxAuth(toolbox_token_provider),
-    headers={"Foundry-Features": "Toolboxes=V1Preview"},
-    timeout=120.0,
+tool_mode = _tool_mode()
+tool_url = (
+    _toolbox_endpoint()
+    if tool_mode == "toolbox"
+    else os.getenv("WEATHER_MCP_URL", "http://127.0.0.1:8093/mcp").strip()
 )
-weather_toolbox = MCPServerStreamableHTTP(
-    _toolbox_endpoint(),
-    http_client=toolbox_http_client,
-    include_instructions=True,
-)
-agent = Agent(model, instructions=INSTRUCTIONS, toolsets=[weather_toolbox])
+tool_kwargs = {}
+if tool_mode == "toolbox":
+    tool_kwargs["http_client"] = httpx.AsyncClient(
+        auth=_ToolboxAuth(toolbox_token_provider),
+        headers={"Foundry-Features": "Toolboxes=V1Preview"},
+        timeout=120.0,
+    )
+logger.info("Weather tool mode=%s url=%s", tool_mode, tool_url)
+weather_tools = MCPServerStreamableHTTP(tool_url, include_instructions=True, **tool_kwargs)
+agent = Agent(model, instructions=INSTRUCTIONS, toolsets=[weather_tools])
 
 app = InvocationAgentServerHost()
 

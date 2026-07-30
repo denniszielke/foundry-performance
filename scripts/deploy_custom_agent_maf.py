@@ -37,6 +37,7 @@ from scripts._helpers import (
     project_client,
     save_env,
     tag_from_cli,
+    weather_tool_mode,
 )
 
 APP_NAME = "weather-custom-agent-maf"
@@ -78,6 +79,7 @@ def register_external_agent() -> None:
 def main(tag: str | None = None, *, register: bool = True) -> None:
     load_env()
     endpoint_type = env("AZURE_AI_ENDPOINT_TYPE", "foundry").lower()
+    tool_mode = weather_tool_mode()
 
     print("==> Granting the managed identity toolbox/project access ('Foundry User' role)")
     try:
@@ -89,7 +91,9 @@ def main(tag: str | None = None, *, register: bool = True) -> None:
 
     public_url = f"https://{APP_NAME}.{container_env_default_domain()}"
     container_env = {
+        "WEATHER_TOOL_MODE": tool_mode,
         "WEATHER_MCP_URL": env("WEATHER_MCP_URL", required=True),
+        "WEATHER_TOOLBOX_NAME": env("WEATHER_TOOLBOX_NAME", "weather-tools"),
         "AZURE_AI_ENDPOINT_TYPE": endpoint_type,
         "AZURE_AI_PROJECT_ENDPOINT": env("AZURE_AI_PROJECT_ENDPOINT", required=True),
         "AZURE_AI_MODEL_DEPLOYMENT_NAME": env("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4.1-mini"),
@@ -120,7 +124,11 @@ def main(tag: str | None = None, *, register: bool = True) -> None:
         memory=env("CUSTOM_AGENT_MEMORY", "2.0Gi"),
         readiness_path="/readiness",
     )
-    save_env({"WEATHER_CUSTOM_AGENT_MAF_URL": url, "WEATHER_CUSTOM_AGENT_MAF_IMAGE": image})
+    save_env({
+        "WEATHER_CUSTOM_AGENT_MAF_URL": url,
+        "WEATHER_CUSTOM_AGENT_MAF_IMAGE": image,
+        "WEATHER_CUSTOM_AGENT_MAF_TOOL_MODE": tool_mode,
+    })
 
     if register:
         register_external_agent()

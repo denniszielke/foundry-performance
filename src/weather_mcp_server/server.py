@@ -53,9 +53,10 @@ mcp = FastMCP(
     name="weather",
     instructions=(
         "Weather information tools. Use these tools to look up the current weather "
-        "and multi-day forecast for a city. Call list_cities first if you are unsure "
-        "which cities are available. All temperatures are in degrees Celsius. Results "
-        "are returned as JSON."
+        "and multi-day forecast for a city, propose weather-appropriate activities, "
+        "and find cities matching desired weather or environments. Call list_cities "
+        "first if you are unsure which cities are available. All temperatures are in "
+        "degrees Celsius. Results are returned as JSON."
     ),
 )
 
@@ -70,7 +71,7 @@ async def health_check(_: Request) -> JSONResponse:
 def list_cities() -> str:
     """List the cities this server can report weather for.
 
-    Returns a JSON array of ``{city, country, climate}`` objects.
+    Returns a JSON array of ``{city, country, climate, environments}`` objects.
     """
     return json.dumps({"cities": _store.cities()}, indent=2)
 
@@ -113,6 +114,47 @@ def get_forecast(city: str, days: int = 3) -> str:
             indent=2,
         )
     return json.dumps(forecast, indent=2)
+
+
+@mcp.tool()
+def propose_activity(city: str, conditions: str) -> str:
+    """Propose activities for a city given expected weather conditions.
+
+    Args:
+        city: City name, e.g. "Sydney" or "Nairobi" (case-insensitive).
+        conditions: Natural-language weather, e.g. "clear and warm" or
+            "heavy rain and windy".
+
+    Returns JSON with up to three activities adapted to the weather and the
+    city's environment. Returns an error object if the city is unknown.
+    """
+    return json.dumps(_store.propose_activity(city, conditions), indent=2)
+
+
+@mcp.tool()
+def propose_city(
+    conditions: str | None = None,
+    date: str | None = None,
+    environment: str | None = None,
+) -> str:
+    """Propose cities matching desired weather, environment, or both.
+
+    Args:
+        conditions: Optional natural-language weather such as "warm and dry",
+            "snowy", or "calm and sunny".
+        date: Optional ISO date (YYYY-MM-DD) within the available 7-day forecast.
+            Defaults to today.
+        environment: Optional setting such as sea, coast, beach, mountains,
+            forest, desert, city, island, lakes, river, savanna, or highlands.
+
+    Returns JSON containing up to three ranked city proposals, their forecast,
+    environment tags, matched conditions, and score. At least one of
+    ``conditions`` or ``environment`` must be supplied.
+    """
+    return json.dumps(
+        _store.propose_city(conditions=conditions, on_date=date, environment=environment),
+        indent=2,
+    )
 
 
 def main() -> None:

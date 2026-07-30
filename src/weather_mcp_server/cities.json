@@ -1,10 +1,10 @@
 [
-  {"city": "Seattle",    "country": "US", "base_temp_c": 12, "climate": "temperate-rainy"},
-  {"city": "Berlin",     "country": "DE", "base_temp_c": 10, "climate": "continental"},
-  {"city": "Cairo",      "country": "EG", "base_temp_c": 28, "climate": "desert"},
-  {"city": "Tokyo",      "country": "JP", "base_temp_c": 17, "climate": "humid-subtropical"},
-  {"city": "Reykjavik",  "country": "IS", "base_temp_c": 4,  "climate": "subpolar"},
-  {"city": "Sydney",     "country": "AU", "base_temp_c": 21, "climate": "temperate"},
-  {"city": "Nairobi",    "country": "KE", "base_temp_c": 20, "climate": "tropical-highland"},
-  {"city": "Singapore",  "country": "SG", "base_temp_c": 30, "climate": "tropical-rainforest"}
+  {"city": "Seattle",    "country": "US", "base_temp_c": 12, "climate": "temperate-rainy",    "environments": ["sea", "coast", "forest", "city"]},
+  {"city": "Berlin",     "country": "DE", "base_temp_c": 10, "climate": "continental",       "environments": ["city", "lakes", "forest"]},
+  {"city": "Cairo",      "country": "EG", "base_temp_c": 28, "climate": "desert",            "environments": ["desert", "city", "river"]},
+  {"city": "Tokyo",      "country": "JP", "base_temp_c": 17, "climate": "humid-subtropical", "environments": ["sea", "coast", "city"]},
+  {"city": "Reykjavik",  "country": "IS", "base_temp_c": 4,  "climate": "subpolar",          "environments": ["sea", "coast", "mountains"]},
+  {"city": "Sydney",     "country": "AU", "base_temp_c": 21, "climate": "temperate",         "environments": ["sea", "coast", "beach", "city"]},
+  {"city": "Nairobi",    "country": "KE", "base_temp_c": 20, "climate": "tropical-highland", "environments": ["highlands", "mountains", "savanna", "city"]},
+  {"city": "Singapore",  "country": "SG", "base_temp_c": 30, "climate": "tropical-rainforest", "environments": ["sea", "island", "tropical", "city"]}
 ]

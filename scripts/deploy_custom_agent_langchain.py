@@ -15,6 +15,7 @@ from scripts._helpers import (
     project_client,
     save_env,
     tag_from_cli,
+    weather_tool_mode,
 )
 
 APP_NAME = "weather-custom-agent-langchain"
@@ -47,6 +48,7 @@ def register_external_agent() -> None:
 def main(tag: str | None = None, *, register: bool = True) -> None:
     load_env()
     endpoint_type = env("AZURE_AI_ENDPOINT_TYPE", "foundry").lower()
+    tool_mode = weather_tool_mode()
 
     print("==> Granting the managed identity project access ('Foundry User' role)")
     try:
@@ -60,7 +62,9 @@ def main(tag: str | None = None, *, register: bool = True) -> None:
         tag=tag,
     )
     container_env = {
+        "WEATHER_TOOL_MODE": tool_mode,
         "WEATHER_MCP_URL": env("WEATHER_MCP_URL", required=True),
+        "WEATHER_TOOLBOX_NAME": env("WEATHER_TOOLBOX_NAME", "weather-tools"),
         "AZURE_AI_ENDPOINT_TYPE": endpoint_type,
         "AZURE_AI_PROJECT_ENDPOINT": env("AZURE_AI_PROJECT_ENDPOINT", required=True),
         "AZURE_AI_MODEL_DEPLOYMENT_NAME": env(
@@ -85,6 +89,7 @@ def main(tag: str | None = None, *, register: bool = True) -> None:
         {
             "WEATHER_CUSTOM_AGENT_LANGCHAIN_URL": url,
             "WEATHER_CUSTOM_AGENT_LANGCHAIN_IMAGE": image,
+            "WEATHER_CUSTOM_AGENT_LANGCHAIN_TOOL_MODE": tool_mode,
         }
     )
 

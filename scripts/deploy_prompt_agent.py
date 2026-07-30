@@ -13,7 +13,7 @@ Requires ``WEATHER_MCP_URL`` (run ``scripts.deploy_weather_mcp_server`` first).
 
 from __future__ import annotations
 
-from scripts._helpers import env, load_env, project_client, save_env
+from scripts._helpers import ensure_toolbox_role, env, load_env, project_client, save_env, weather_tool_mode
 
 AGENT_NAME = "weather-prompt-agent"
 INSTRUCTIONS = (
@@ -34,7 +34,14 @@ INSTRUCTIONS = (
 
 def main() -> None:
     load_env()
-    mcp_url = env("WEATHER_MCP_URL", required=True)
+    tool_mode = weather_tool_mode()
+    tool_url = (
+        env("FOUNDRY_TOOLBOX_ENDPOINT", required=True)
+        if tool_mode == "toolbox"
+        else env("WEATHER_MCP_URL", required=True)
+    )
+    if tool_mode == "toolbox":
+        ensure_toolbox_role()
     model = env("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4.1-mini")
 
     from azure.ai.projects.models import (
@@ -56,10 +63,10 @@ def main() -> None:
                 model=model,
                 instructions=INSTRUCTIONS,
                 tools=[
-                    MCPTool(server_label="weather", server_url=mcp_url, require_approval="never"),
+                    MCPTool(server_label="weather", server_url=tool_url, require_approval="never"),
                 ],
             ),
-            description="Weather prompt agent using the weather MCP server directly.",
+            description=f"Weather prompt agent using weather tools via {tool_mode} MCP.",
         )
         print(f"Created prompt agent '{AGENT_NAME}' version {version.version}")
 
@@ -80,7 +87,7 @@ def main() -> None:
         )
         print(f"Routed 100% of traffic to version {version.version}")
 
-    save_env({"WEATHER_PROMPT_AGENT_ID": AGENT_NAME})
+    save_env({"WEATHER_PROMPT_AGENT_ID": AGENT_NAME, "WEATHER_PROMPT_AGENT_TOOL_MODE": tool_mode})
     print(f"\nPrompt agent ready: {AGENT_NAME}")
     print("Invoke via the Foundry Responses API, e.g.:")
     print(f"  client.get_openai_client(agent_name='{AGENT_NAME}').responses.create(input='weather in Berlin?')")

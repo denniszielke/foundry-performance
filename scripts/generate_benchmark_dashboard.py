@@ -59,6 +59,7 @@ def _load_run(path: Path) -> dict[str, Any]:
         "agent-type": data["agent-type"],
         "model-hosting": data["model-hosting"],
         "model-deployment": data["model-deployment"],
+        "tool-mode": data.get("tool-mode", "unknown"),
         "iterations": data.get("iterations"),
         "query": data.get("query"),
         "base-url": data.get("base-url"),
@@ -237,6 +238,7 @@ HTML_TEMPLATE = r'''<!doctype html>
       <label>Agent type<select id="agent-type"></select></label>
       <label>Model hosting<select id="model-hosting"></select></label>
       <label>Model deployment<select id="model-deployment"></select></label>
+      <label>Tool mode<select id="tool-mode"></select></label>
       <label>Protocol<select id="protocol"></select></label>
       <fieldset class="phase-filter"><legend>Include phases</legend><div class="phase-options">
         <label class="phase-option"><input type="checkbox" name="phase" value="cold" checked>Cold</label>
@@ -266,7 +268,7 @@ HTML_TEMPLATE = r'''<!doctype html>
       <div class="section-head"><h2>Measurements</h2><span class="section-note">Select a heading to sort</span></div>
       <div class="table-wrap"><table>
         <thead><tr>
-          <th data-key="agent-type">Agent</th><th data-key="model-hosting">Hosting</th><th data-key="model-deployment">Model</th>
+          <th data-key="agent-type">Agent</th><th data-key="model-hosting">Hosting</th><th data-key="model-deployment">Model</th><th data-key="tool-mode">Tool mode</th>
           <th data-key="protocol">Protocol</th><th data-key="phase">Phase</th><th data-key="n">N</th><th data-key="err">Errors</th>
           <th data-key="mean-ms">Mean</th><th data-key="p50">P50</th><th data-key="p95">P95</th><th data-key="ttfb">TTFB</th><th data-key="datetime">Recorded</th>
         </tr></thead><tbody id="table-body"></tbody>
@@ -277,7 +279,7 @@ HTML_TEMPLATE = r'''<!doctype html>
 
   <script>
     const INITIAL_RUNS = __RUN_DATA__;
-    const filterIds = ["agent-type", "model-hosting", "model-deployment", "protocol"];
+    const filterIds = ["agent-type", "model-hosting", "model-deployment", "tool-mode", "protocol"];
     const state = { runs: INITIAL_RUNS, sortKey: "mean-ms", sortDirection: 1 };
     const byId = (id) => document.getElementById(id);
     const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[char]));
@@ -294,11 +296,11 @@ HTML_TEMPLATE = r'''<!doctype html>
       const missing = required.filter((key) => !(key in data));
       if (missing.length || !Array.isArray(data.results)) throw new Error(`${source}: invalid benchmark data${missing.length ? `; missing ${missing.join(", ")}` : ""}`);
       return {source, datetime: data.datetime, "agent-type": data["agent-type"], "model-hosting": data["model-hosting"],
-        "model-deployment": data["model-deployment"], iterations: data.iterations, query: data.query, "base-url": data["base-url"],
+        "model-deployment": data["model-deployment"], "tool-mode": data["tool-mode"] || "unknown", iterations: data.iterations, query: data.query, "base-url": data["base-url"],
         quality: qualityFor(Array.isArray(data.turns) ? data.turns : []), results: data.results};
     }
     function rows() {
-      return state.runs.flatMap((run) => run.results.map((row) => ({...row, source: run.source, datetime: run.datetime, quality: run.quality})));
+      return state.runs.flatMap((run) => run.results.map((row) => ({...row, "tool-mode": row["tool-mode"] || run["tool-mode"] || "unknown", source: run.source, datetime: run.datetime, quality: run.quality})));
     }
     function filteredRows() {
       const phases = new Set([...document.querySelectorAll('input[name="phase"]:checked')].map((input) => input.value));
@@ -345,14 +347,14 @@ HTML_TEMPLATE = r'''<!doctype html>
       byId("chart").innerHTML = plotted.map(({row, value}) => {
         const errorRate = number(row.n) ? number(row.err) / number(row.n) : 0;
         const display = metric === "error-rate" ? formatRate(value) : formatMs(value);
-        return `<div class="bar-row" title="${escapeHtml(row.source)}"><div class="bar-label"><strong>${escapeHtml(row["agent-type"])}</strong><span>${escapeHtml(row["model-hosting"])} · ${escapeHtml(row.protocol)} · ${escapeHtml(row.phase)}</span></div><div class="track"><div class="bar ${errorRate ? "bad" : ""}" style="width:${max ? Math.max(0.5, value / max * 100) : 0}%"></div></div><div class="bar-value">${display}</div></div>`;
+        return `<div class="bar-row" title="${escapeHtml(row.source)}"><div class="bar-label"><strong>${escapeHtml(row["agent-type"])}</strong><span>${escapeHtml(row["tool-mode"])} · ${escapeHtml(row.protocol)} · ${escapeHtml(row.phase)}</span></div><div class="track"><div class="bar ${errorRate ? "bad" : ""}" style="width:${max ? Math.max(0.5, value / max * 100) : 0}%"></div></div><div class="bar-value">${display}</div></div>`;
       }).join("");
     }
     function renderRuns(items) {
       const sources = new Set(items.map((row) => row.source));
       const runs = state.runs.filter((run) => sources.has(run.source)).sort((a, b) => String(b.datetime).localeCompare(String(a.datetime)));
       byId("run-count").textContent = `${runs.length} of ${state.runs.length}`;
-      byId("runs").innerHTML = runs.length ? runs.map((run) => `<div class="run"><div class="run-top"><span class="run-name">${escapeHtml(run["agent-type"])}</span><span class="badge ${run.quality.suspicious ? "warn" : ""}">${run.quality.suspicious ? `${run.quality.suspicious} warnings` : "clean"}</span></div><div class="run-meta">${escapeHtml(run["model-hosting"])} · ${escapeHtml(run["model-deployment"])} · ${new Date(run.datetime).toLocaleString()}</div><div class="run-file">${escapeHtml(run.source)}</div></div>`).join("") : `<div class="empty">No runs match the filters.</div>`;
+      byId("runs").innerHTML = runs.length ? runs.map((run) => `<div class="run"><div class="run-top"><span class="run-name">${escapeHtml(run["agent-type"])}</span><span class="badge ${run.quality.suspicious ? "warn" : ""}">${run.quality.suspicious ? `${run.quality.suspicious} warnings` : "clean"}</span></div><div class="run-meta">${escapeHtml(run["model-hosting"])} · ${escapeHtml(run["model-deployment"])} · ${escapeHtml(run["tool-mode"])} · ${new Date(run.datetime).toLocaleString()}</div><div class="run-file">${escapeHtml(run.source)}</div></div>`).join("") : `<div class="empty">No runs match the filters.</div>`;
     }
     function renderTable(items) {
       const direction = state.sortDirection;
@@ -361,7 +363,7 @@ HTML_TEMPLATE = r'''<!doctype html>
         if (number(left) !== null && number(right) !== null) return (number(left) - number(right)) * direction;
         return String(left ?? "").localeCompare(String(right ?? "")) * direction;
       });
-      byId("table-body").innerHTML = sorted.length ? sorted.map((row) => `<tr class="${row.quality.suspicious ? "flagged" : ""}" title="${escapeHtml(row.source)}"><td>${escapeHtml(row["agent-type"])}</td><td>${escapeHtml(row["model-hosting"])}</td><td>${escapeHtml(row["model-deployment"])}</td><td>${escapeHtml(row.protocol)}</td><td>${escapeHtml(row.phase)}</td><td class="number">${number(row.n) ?? "--"}</td><td class="number ${number(row.err) ? "error" : ""}">${number(row.err) ?? "--"}</td><td class="number">${formatMs(row["mean-ms"])}</td><td class="number">${formatMs(row.p50)}</td><td class="number">${formatMs(row.p95)}</td><td class="number">${formatMs(row.ttfb)}</td><td>${new Date(row.datetime).toLocaleString()}</td></tr>`).join("") : `<tr><td colspan="12" class="empty">No measurements match the filters.</td></tr>`;
+      byId("table-body").innerHTML = sorted.length ? sorted.map((row) => `<tr class="${row.quality.suspicious ? "flagged" : ""}" title="${escapeHtml(row.source)}"><td>${escapeHtml(row["agent-type"])}</td><td>${escapeHtml(row["model-hosting"])}</td><td>${escapeHtml(row["model-deployment"])}</td><td>${escapeHtml(row["tool-mode"])}</td><td>${escapeHtml(row.protocol)}</td><td>${escapeHtml(row.phase)}</td><td class="number">${number(row.n) ?? "--"}</td><td class="number ${number(row.err) ? "error" : ""}">${number(row.err) ?? "--"}</td><td class="number">${formatMs(row["mean-ms"])}</td><td class="number">${formatMs(row.p50)}</td><td class="number">${formatMs(row.p95)}</td><td class="number">${formatMs(row.ttfb)}</td><td>${new Date(row.datetime).toLocaleString()}</td></tr>`).join("") : `<tr><td colspan="13" class="empty">No measurements match the filters.</td></tr>`;
     }
     function render() {
       const items = filteredRows();

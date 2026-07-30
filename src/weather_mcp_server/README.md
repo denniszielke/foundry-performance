@@ -17,8 +17,13 @@ as possible (anonymous, no Entra JWT, no Easy Auth).
 | `list_cities` | List the cities the server can report weather for |
 | `get_current_weather` | Current temperature, condition, humidity, wind, precipitation for a city |
 | `get_forecast` | 1–7 day forecast for a city |
+| `propose_activity` | Suggest activities for a city and expected weather conditions |
+| `propose_city` | Rank cities by desired weather/date, environment, or both |
 
-All temperatures are in degrees Celsius. Results are JSON.
+`propose_city` combines the two proposal use cases in one MCP-safe tool because
+tool names must be unique. Pass `conditions` with an optional ISO `date`, pass
+`environment`, or pass both. Dates are limited to the generated seven-day
+forecast. All temperatures are in degrees Celsius. Results are JSON.
 
 ## Run locally
 

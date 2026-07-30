@@ -8,9 +8,10 @@ import logging
 import os
 import time
 import uuid
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
+import httpx
 from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from langchain.agents import create_agent
@@ -70,6 +71,30 @@ def _openai_endpoint() -> str:
     return f"{parsed.scheme}://{resource}.openai.azure.com"
 
 
+def _tool_mode() -> str:
+    mode = os.getenv("WEATHER_TOOL_MODE", "direct").strip().lower()
+    if mode not in {"direct", "toolbox"}:
+        raise RuntimeError("WEATHER_TOOL_MODE must be 'direct' or 'toolbox'.")
+    return mode
+
+
+def _toolbox_url() -> str:
+    endpoint = os.getenv("FOUNDRY_TOOLBOX_ENDPOINT", "").strip()
+    if endpoint:
+        return endpoint
+    toolbox = os.getenv("WEATHER_TOOLBOX_NAME", "weather-tools")
+    return f"{_project_endpoint()}/toolboxes/{toolbox}/mcp?api-version=v1"
+
+
+class _ToolboxAuth(httpx.Auth):
+    def __init__(self, token_provider: Callable[[], str]) -> None:
+        self._token_provider = token_provider
+
+    def auth_flow(self, request: httpx.Request):  # noqa: ANN201
+        request.headers["Authorization"] = f"Bearer {self._token_provider()}"
+        yield request
+
+
 def _model_name() -> str:
     return (
         os.getenv("FOUNDRY_MODEL_NAME")
@@ -117,16 +142,23 @@ async def build_responses_graph():  # noqa: ANN201
 
 async def _create_graph(checkpointer=None):  # noqa: ANN001, ANN201
     credential = DefaultAzureCredential()
+    tool_mode = _tool_mode()
+    connection: dict[str, Any] = {
+        "transport": "streamable_http",
+        "url": (
+            _toolbox_url()
+            if tool_mode == "toolbox"
+            else os.getenv("WEATHER_MCP_URL", "http://127.0.0.1:8093/mcp")
+        ),
+    }
+    if tool_mode == "toolbox":
+        connection["headers"] = {"Foundry-Features": "Toolboxes=V1Preview"}
+        connection["auth"] = _ToolboxAuth(get_bearer_token_provider(credential, FOUNDRY_SCOPE))
     mcp_client = MultiServerMCPClient(
-        {
-            "weather": {
-                "transport": "streamable_http",
-                "url": os.getenv("WEATHER_MCP_URL", "http://127.0.0.1:8093/mcp"),
-            }
-        }
+        {"weather": connection}
     )
     tools = await mcp_client.get_tools()
-    logger.info("Loaded %d tools from direct weather MCP", len(tools))
+    logger.info("Loaded %d tools using weather tool mode=%s", len(tools), tool_mode)
     graph = create_agent(
         model=_build_chat_model(credential),
         tools=tools,

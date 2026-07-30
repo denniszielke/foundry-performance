@@ -18,6 +18,7 @@ import os
 import random
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Any
 
 _CATALOG_PATH = Path(__file__).with_name("cities.json")
 
@@ -32,6 +33,25 @@ _CONDITIONS = [
     "fog",
     "windy",
 ]
+
+_ENVIRONMENT_ALIASES = {
+    "ocean": "sea",
+    "seaside": "sea",
+    "mountain": "mountains",
+    "alpine": "mountains",
+    "woods": "forest",
+    "woodland": "forest",
+    "urban": "city",
+}
+
+_ACTIVITIES = {
+    "clear": ["walking tour", "outdoor sightseeing", "picnic"],
+    "rain": ["museum visit", "covered market", "local food tour"],
+    "snow": ["winter sightseeing", "cafe visit", "photography walk"],
+    "wind": ["sheltered neighborhood tour", "museum visit", "cafe visit"],
+    "fog": ["museum visit", "local food tour", "indoor cultural experience"],
+    "default": ["walking tour", "local food tour", "museum visit"],
+}
 
 
 def _rng() -> random.Random:
@@ -81,7 +101,15 @@ class WeatherStore:
             ]
 
     def cities(self) -> list[dict]:
-        return [{"city": c["city"], "country": c["country"], "climate": c["climate"]} for c in self._catalog]
+        return [
+            {
+                "city": c["city"],
+                "country": c["country"],
+                "climate": c["climate"],
+                "environments": c["environments"],
+            }
+            for c in self._catalog
+        ]
 
     def _resolve(self, city: str) -> dict | None:
         return self._by_city.get(city.strip().lower())
@@ -108,3 +136,129 @@ class WeatherStore:
             "days": days,
             "forecast": self._forecast[meta["city"].lower()][:days],
         }
+
+    def propose_activity(self, city: str, conditions: str) -> dict:
+        """Suggest weather-appropriate activities for a known city."""
+        meta = self._resolve(city)
+        if not meta:
+            return {"error": f"Unknown city '{city}'.", "known_cities": [c["city"] for c in self._catalog]}
+
+        normalized = conditions.strip().lower()
+        category = "default"
+        for candidate, keywords in (
+            ("rain", ("rain", "wet", "storm", "shower")),
+            ("snow", ("snow", "freezing", "icy")),
+            ("wind", ("wind", "breezy", "gust")),
+            ("fog", ("fog", "mist")),
+            ("clear", ("clear", "sun", "dry", "warm", "hot")),
+        ):
+            if any(keyword in normalized for keyword in keywords):
+                category = candidate
+                break
+
+        activities = list(_ACTIVITIES[category])
+        environments = set(meta["environments"])
+        if category == "clear" and environments & {"sea", "coast", "beach", "island"}:
+            activities.insert(0, "waterfront or beach visit")
+        if category == "clear" and environments & {"mountains", "highlands", "forest"}:
+            activities.insert(0, "hiking")
+
+        return {
+            "city": meta["city"],
+            "country": meta["country"],
+            "conditions": conditions,
+            "environments": meta["environments"],
+            "activities": activities[:3],
+        }
+
+    def propose_city(
+        self,
+        *,
+        conditions: str | None = None,
+        on_date: str | None = None,
+        environment: str | None = None,
+    ) -> dict:
+        """Rank cities by desired forecast conditions and/or environment."""
+        if not conditions and not environment:
+            return {"error": "Provide conditions, environment, or both."}
+
+        target_date = date.today()
+        if on_date:
+            try:
+                target_date = date.fromisoformat(on_date)
+            except ValueError:
+                return {"error": "date must use ISO format YYYY-MM-DD."}
+        day_index = (target_date - date.today()).days
+        if day_index < 0 or day_index > 6:
+            return {
+                "error": "date must be within the available 7-day forecast.",
+                "available_from": date.today().isoformat(),
+                "available_to": (date.today() + timedelta(days=6)).isoformat(),
+            }
+
+        desired_environment = None
+        if environment:
+            desired_environment = _ENVIRONMENT_ALIASES.get(environment.strip().lower(), environment.strip().lower())
+
+        ranked: list[dict[str, Any]] = []
+        for meta in self._catalog:
+            reading = self._forecast[meta["city"].lower()][day_index]
+            weather_score, weather_matches = _score_conditions(reading, conditions)
+            environment_match = desired_environment is None or desired_environment in meta["environments"]
+            if desired_environment and not environment_match:
+                continue
+            ranked.append(
+                {
+                    "city": meta["city"],
+                    "country": meta["country"],
+                    "date": reading["date"],
+                    "weather": reading,
+                    "environments": meta["environments"],
+                    "matched_conditions": weather_matches,
+                    "score": weather_score + (1 if desired_environment else 0),
+                }
+            )
+
+        ranked.sort(key=lambda item: (-item["score"], item["city"]))
+        return {
+            "requested_conditions": conditions,
+            "requested_environment": environment,
+            "date": target_date.isoformat(),
+            "proposals": ranked[:3],
+        }
+
+
+def _score_conditions(reading: dict, conditions: str | None) -> tuple[int, list[str]]:
+    if not conditions:
+        return 0, []
+
+    desired = conditions.lower()
+    matches: list[str] = []
+    condition = reading["condition"]
+    temperature = reading["temperature_c"]
+    precipitation = reading["precipitation_mm"]
+    checks = [
+        ("clear", ("clear" in condition or "partly cloudy" in condition), ("clear", "sunny", "sun")),
+        ("cloudy", ("cloud" in condition or "overcast" in condition), ("cloud", "cloudy", "overcast")),
+        ("rain", ("rain" in condition or "thunderstorm" in condition), ("rain", "rainy", "wet")),
+        ("snow", "snow" in condition, ("snow", "snowy")),
+        ("windy", ("windy" in condition or reading["wind_kph"] >= 25), ("windy", "wind")),
+        ("fog", "fog" in condition, ("fog", "foggy")),
+        ("hot", temperature >= 25, ("hot",)),
+        ("warm", temperature >= 18, ("warm",)),
+        ("mild", 10 <= temperature <= 24, ("mild",)),
+        ("cool", temperature <= 15, ("cool",)),
+        ("cold", temperature <= 8, ("cold",)),
+        ("dry", precipitation <= 1 and not any(word in condition for word in ("rain", "snow", "storm")), ("dry",)),
+        ("humid", reading["humidity_percent"] >= 70, ("humid",)),
+        ("calm", reading["wind_kph"] <= 15, ("calm",)),
+    ]
+    requested = 0
+    for label, is_match, keywords in checks:
+        if any(keyword in desired for keyword in keywords):
+            requested += 1
+            if is_match:
+                matches.append(label)
+    if requested == 0 and condition in desired:
+        matches.append(condition)
+    return len(matches), matches

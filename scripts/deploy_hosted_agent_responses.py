@@ -2,14 +2,13 @@
 
 Builds the agent-framework container image and registers it in Foundry as a
 ``HostedAgentDefinition`` implementing only the responses protocol. The
-container's weather tool is served through the **Foundry toolbox**
-(``WEATHER_TOOL_MODE=toolbox``); Foundry pulls the image, runs it, and
+container uses direct MCP by default; ``WEATHER_TOOL_MODE=toolbox`` routes the
+weather tool through Foundry toolbox. Foundry pulls the image, runs it, and
 front-ends the responses protocol plus native A2A. Records the agent name in
 ``.env`` (``WEATHER_HOSTED_AGENT_RESPONSES_NAME``).
 
-Requires the weather toolbox to be registered (run
-``scripts.register_weather_toolbox`` first, which records ``WEATHER_TOOLBOX_NAME``)
-and the built image (``scripts.build_containers`` or this script builds it).
+Toolbox mode requires ``scripts.register_weather_toolbox`` first. Also requires
+the built image (``scripts.build_containers`` or this script builds it).
 
     python -m scripts.deploy_hosted_agent_responses
 """
@@ -28,6 +27,7 @@ from scripts._helpers import (
     project_client,
     save_env,
     tag_from_cli,
+    weather_tool_mode,
 )
 
 AGENT_NAME = "weather-hosted-agent-responses"
@@ -41,12 +41,14 @@ PROTOCOLS = [("responses", "2.0.0")]
 def main(tag: str | None = None) -> None:
     load_env()
     endpoint_type = env("AZURE_AI_ENDPOINT_TYPE", "foundry").lower()
+    tool_mode = weather_tool_mode()
     image = acr_build(AGENT_NAME, ROOT / "src" / "hosted_agent_responses" / "Dockerfile", tag=tag)
 
     # The hosted agent runs as the AI account's system-assigned identity; grant it
     # the data-plane 'Foundry User' role so its calls to the toolbox MCP endpoint
     # are authorized (otherwise the toolbox returns HTTP 401).
-    ensure_toolbox_role()
+    if tool_mode == "toolbox":
+        ensure_toolbox_role()
 
     # Foundry reserves the FOUNDRY_* and AGENT_* namespaces plus
     # APPLICATIONINSIGHTS_CONNECTION_STRING for platform use and injects them into
@@ -54,6 +56,8 @@ def main(tag: str | None = None) -> None:
     # *name* instead; the runner rebuilds the toolbox MCP URL from it and the
     # project endpoint when FOUNDRY_TOOLBOX_ENDPOINT is absent.
     container_env = {
+        "WEATHER_TOOL_MODE": tool_mode,
+        "WEATHER_MCP_URL": env("WEATHER_MCP_URL", required=True),
         "WEATHER_TOOLBOX_NAME": env("WEATHER_TOOLBOX_NAME", "weather-tools"),
         "AZURE_AI_ENDPOINT_TYPE": endpoint_type,
         "AZURE_AI_PROJECT_ENDPOINT": env("AZURE_AI_PROJECT_ENDPOINT", required=True),
@@ -131,7 +135,11 @@ def main(tag: str | None = None) -> None:
         )
         print(f"Routed 100% of traffic to version {created.version}")
 
-    save_env({"WEATHER_HOSTED_AGENT_RESPONSES_NAME": AGENT_NAME, "WEATHER_HOSTED_AGENT_RESPONSES_IMAGE": image})
+    save_env({
+        "WEATHER_HOSTED_AGENT_RESPONSES_NAME": AGENT_NAME,
+        "WEATHER_HOSTED_AGENT_RESPONSES_IMAGE": image,
+        "WEATHER_HOSTED_AGENT_RESPONSES_TOOL_MODE": tool_mode,
+    })
     print(f"\nHosted agent (responses) ready: {AGENT_NAME} ({image})")
 
 

@@ -29,11 +29,11 @@ Central US**, so provision in `northcentralus`.
 
 | # | variation                     | hosting                         | protocol(s)                          | tool access                     | code |
 |---|-------------------------------|----------------------------------|---------------------------------------|----------------------------------|------|
-| 1 | **prompt agent**              | Foundry-native (no container)    | responses, a2a, invocations          | inline MCP tool → MCP server    | `scripts/deploy_prompt_agent.py` |
-| 2 | **hosted agent (responses)**  | Foundry-hosted **container**    | responses, a2a (fronted by Foundry)  | **Foundry toolbox** → MCP server| `src/hosted_agent_responses/` |
-| 3 | **hosted agent (invocations)**| Foundry-hosted **container**    | invocations, invocations_ws          | **Foundry toolbox** → MCP server| `src/hosted_agent_invocations/` |
-| 4 | **custom MAF agent**          | Azure Container App (outside Foundry) | responses, invocations, invocations_ws, a2a | **direct** MCP URL (no toolbox) | `src/custom_agent_maf/` |
-| 5 | **custom agent (LangChain)**  | Azure Container App (outside Foundry) | responses, a2a | **direct** MCP URL (no toolbox) | `src/custom_agent_langchain/` |
+| 1 | **prompt agent**              | Foundry-native (no container)    | responses, a2a, invocations          | selectable MCP route           | `scripts/deploy_prompt_agent.py` |
+| 2 | **hosted agent (responses)**  | Foundry-hosted **container**    | responses, a2a (fronted by Foundry)  | selectable MCP route           | `src/hosted_agent_responses/` |
+| 3 | **hosted agent (invocations)**| Foundry-hosted **container**    | invocations, invocations_ws          | selectable MCP route           | `src/hosted_agent_invocations/` |
+| 4 | **custom MAF agent**          | Azure Container App (outside Foundry) | responses, invocations, invocations_ws, a2a | selectable MCP route | `src/custom_agent_maf/` |
+| 5 | **custom agent (LangChain)**  | Azure Container App (outside Foundry) | responses, a2a | selectable MCP route | `src/custom_agent_langchain/` |
 
 Each Agent Framework hosted agent (2, 3) implements a **single, native** `azure-ai-agentserver`
 protocol host — no protocol composition, no shared code between the two. The
@@ -50,7 +50,7 @@ the agent logic itself.
 The LangChain sample (5) uses `langchain-mcp-adapters` to load weather tools
 directly, LangChain `create_agent` to compile the LangGraph agent, an app-owned
 Responses route, and current LangGraph Agent Server's built-in A2A endpoint at
-`/a2a/weather-agent`. Both custom agents run outside Foundry hosting; Foundry
+`/a2a/weather-agent`. The custom ACA agents run outside Foundry hosting; Foundry
 supplies model inference and telemetry registration only.
 
 Variation 5 uses Agent Server's in-memory development runtime because this
@@ -97,6 +97,7 @@ src/
   hosted_agent_invocations/ variation 3 — self-contained, native InvocationAgentServerHost only (invocations + invocations_ws) + Dockerfile (tool via toolbox)
   custom_agent_maf/       variation 4 — native Microsoft Agent Framework multi-protocol host + Dockerfile (direct MCP)
   custom_agent_langchain/ variation 5 — Agent Server A2A + custom Responses route + Dockerfile (direct MCP)
+  custom_agent_harness/   interactive plan-and-execute console (direct MCP)
   clients/                benchmark clients (one per protocol) + run_benchmark.py
 scripts/                build / deploy / register / cleanup scripts
 infra/                  bicep: Foundry + ACR + Container Apps + monitoring
@@ -109,6 +110,7 @@ infra/                  bicep: Foundry + ACR + Container Apps + monitoring
 - An Azure subscription with quota for the chat model in your region
 - `pip install -r requirements.txt` for deployment and shared local tooling
 - `pip install -r src/custom_agent_langchain/requirements.txt` to run variation 5 locally
+- `pip install -r src/custom_agent_harness/requirements.txt` to run the harness console
 
 ## Deploy
 
@@ -133,6 +135,11 @@ infra/                  bicep: Foundry + ACR + Container Apps + monitoring
    python -m scripts.deploy_custom_agent_maf             # variation 4
    python -m scripts.deploy_custom_agent_langchain       # variation 5
    ```
+
+  All agents use the MCP server directly by default. To measure toolbox
+  overhead, set `WEATHER_TOOL_MODE=toolbox` before deploying the agents. The
+  accepted values are `direct` and `toolbox`; changing the value requires an
+  agent redeploy. The effective mode is saved per agent in `.env`.
 
    Each script records what it created back into `.env` (URLs, agent names) for
    the next step and for the benchmark clients.
@@ -192,7 +199,22 @@ python -m src.clients.run_benchmark --agent custom-maf --protocols a2a,responses
 # 5. custom LangChain agent — Container App, responses + a2a directly
 python -m src.clients.run_benchmark --agent custom-langchain --protocols a2a,responses --model-hosting foundry --iterations 5
 python -m src.clients.run_benchmark --agent custom-langchain --protocols a2a,responses --model-hosting openai --iterations 5
+
 ```
+
+## Run the harness console
+
+The Agent Framework harness is an interactive local console, not a hosted
+benchmark variation. It starts in plan mode and connects directly to the weather
+MCP server. Use `/mode execute` after approving its plan.
+
+```bash
+pip install -r src/custom_agent_harness/requirements.txt
+WEATHER_MCP_URL="$WEATHER_MCP_URL" python -m src.custom_agent_harness.agent
+```
+
+It reads `AZURE_AI_PROJECT_ENDPOINT` and `AZURE_AI_MODEL_DEPLOYMENT_NAME` from
+`.env` and authenticates with `AzureCliCredential`, so run `az login` first.
 
 Other options, including pointing at an arbitrary URL directly with
 `--base-url` (bypasses `--agent`/`.env` derivation — useful for a local
@@ -214,7 +236,7 @@ artifact. By default the path is
 
 The artifact contains its UTC `datetime`, run metadata, raw turns, and a
 comparison-ready `results` array. Each result row contains `agent-type`,
-`protocol`, `phase`, `model-hosting`, `model-deployment`, `n`, `err`,
+`protocol`, `phase`, `model-hosting`, `model-deployment`, `tool-mode`, `n`, `err`,
 `mean-ms`, `p50`, `p95`, and mean `ttfb`, with all timings in milliseconds.
 `phase` distinguishes cold, warm, and follow-up measurements.
 
@@ -241,7 +263,7 @@ instead — `run_benchmark.py`'s `--agent` builds both URL shapes for you.
 > (bearer token, scope `https://ai.azure.com/.default`) — unlike the anonymous
 > MCP server/toolbox/custom Container Apps. `--auth` defaults to `auto`,
 > which picks `entra` for `prompt`/`hosted-responses`/`hosted-invocations` and
-> `none` for both custom agents, attaching a token from `DefaultAzureCredential` (the
+> `none` for the custom ACA agents, attaching a token from `DefaultAzureCredential` (the
 > same credential used by `az login`/`azd auth login`) when needed. Override
 > with `--auth entra`/`--auth none` if you need to force one or the other
 > (e.g. alongside `--base-url`).

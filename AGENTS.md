@@ -26,6 +26,7 @@ Written by `azd up` (copied to `./.env` by the `azure.yaml` postdeploy hook):
 - `AZURE_AI_PROJECT_ENDPOINT` — Foundry project endpoint (all agents + toolbox)
 - `AZURE_AI_ENDPOINT_TYPE=foundry|openai` — model inference route for all hosted/custom containers
 - `AZURE_AI_MODEL_DEPLOYMENT_NAME` — chat model deployment
+- `WEATHER_TOOL_MODE=direct|toolbox` — weather tool route for every agent; defaults to `direct`
 - `APPLICATIONINSIGHTS_CONNECTION_STRING` — telemetry (all components)
 - `AZURE_CONTAINER_REGISTRY_NAME` / `AZURE_CONTAINER_REGISTRY_ENDPOINT` — ACR
 - `AZURE_CONTAINER_ENVIRONMENT_NAME` — Container Apps environment
@@ -69,6 +70,10 @@ python -m scripts.deploy_custom_agent_maf
 python -m scripts.deploy_custom_agent_langchain
 ```
 
+Set `WEATHER_TOOL_MODE=toolbox` before the agent deploy commands to benchmark
+the toolbox path. The default is `direct`. Redeploy every agent after changing
+the mode; each deploy script records its effective mode for benchmark metadata.
+
 The LangChain container uses the in-memory LangGraph Agent Server for this
 benchmark. Its A2A endpoint is `/a2a/weather-agent`; a production standalone
 Agent Server requires the backing services and license documented by LangChain.
@@ -91,7 +96,7 @@ python -m scripts.grant_agent_permissions --skip-toolbox
 ### Rebuild one image
 
 ```bash
-python -m scripts.build_containers            # all four, or:
+python -m scripts.build_containers            # all containers, or:
 az acr build --registry "$AZURE_CONTAINER_REGISTRY_NAME" \
   --image weather-custom-agent-maf:latest \
   --file src/custom_agent_maf/Dockerfile .
@@ -146,6 +151,18 @@ python -m src.custom_agent_maf.agent
 python -m src.clients.run_benchmark --base-url http://127.0.0.1:8088 \
   --model-hosting foundry
 ```
+
+### Run the harness console
+
+The harness is local and interactive; it is not built, deployed, or benchmarked
+as a Container App.
+
+```bash
+pip install -r src/custom_agent_harness/requirements.txt
+WEATHER_MCP_URL="$WEATHER_MCP_URL" python -m src.custom_agent_harness.agent
+```
+
+It starts in plan mode. Use `/mode execute` after approving the plan.
 
 The agent still needs a real Foundry project + model for inference
 (`AZURE_AI_PROJECT_ENDPOINT`) and an authenticated `az login`.

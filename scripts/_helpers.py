@@ -71,6 +71,14 @@ def env(key: str, default: str | None = None, *, required: bool = False) -> str:
     return value
 
 
+def weather_tool_mode() -> str:
+    """Return the validated weather tool route used by deployed agents."""
+    mode = env("WEATHER_TOOL_MODE", "direct").strip().lower()
+    if mode not in {"direct", "toolbox"}:
+        sys.exit("ERROR: WEATHER_TOOL_MODE must be 'direct' or 'toolbox'.")
+    return mode
+
+
 # --------------------------------------------------------------------------- #
 # Azure CLI wrappers
 # --------------------------------------------------------------------------- #

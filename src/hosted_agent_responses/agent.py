@@ -13,10 +13,8 @@ itself (enabled on the endpoint by ``scripts.deploy_hosted_agent_responses``).
 See:
 https://learn.microsoft.com/azure/foundry/agents/how-to/enable-agent-to-agent-endpoint
 
-The weather tool is reached through the **Foundry toolbox** (MCP over HTTP,
-authenticated with the agent's managed identity). ``ResponsesHostServer``
-enters the agent's async context (which opens the MCP connection) lazily on
-the first request, which is exactly the cold start the benchmark measures.
+The weather tool uses direct MCP by default. Set ``WEATHER_TOOL_MODE=toolbox``
+to route it through the authenticated Foundry toolbox instead.
 
 Run locally from the project root::
 
@@ -115,6 +113,13 @@ def _toolbox_url() -> str:
     return url
 
 
+def _tool_mode() -> str:
+    mode = os.getenv("WEATHER_TOOL_MODE", "direct").strip().lower()
+    if mode not in {"direct", "toolbox"}:
+        raise RuntimeError("WEATHER_TOOL_MODE must be 'direct' or 'toolbox'.")
+    return mode
+
+
 class _ToolboxAuth(httpx.Auth):
     """Injects a fresh Entra bearer token on every request to the toolbox."""
 
@@ -133,18 +138,21 @@ _token_provider = get_bearer_token_provider(_credential, FOUNDRY_SCOPE)
 # lazily enters the agent's (and therefore the MCP tool's) async context on the
 # first request, so opening the toolbox connection is still deferred to the
 # first live request rather than happening at import time.
-_http_client = httpx.AsyncClient(
-    auth=_ToolboxAuth(_token_provider),
-    headers={"Foundry-Features": "Toolboxes=V1Preview"},
-    timeout=120.0,
+_mode = _tool_mode()
+_tool_url = (
+    _toolbox_url()
+    if _mode == "toolbox"
+    else os.getenv("WEATHER_MCP_URL", "http://127.0.0.1:8093/mcp").strip()
 )
-
-_mcp_tool = MCPStreamableHTTPTool(
-    name="weather",
-    url=_toolbox_url(),
-    http_client=_http_client,
-    load_prompts=False,
-)
+_tool_kwargs: dict[str, Any] = {}
+if _mode == "toolbox":
+    _tool_kwargs["http_client"] = httpx.AsyncClient(
+        auth=_ToolboxAuth(_token_provider),
+        headers={"Foundry-Features": "Toolboxes=V1Preview"},
+        timeout=120.0,
+    )
+logger.info("Weather tool mode=%s url=%s", _mode, _tool_url)
+_mcp_tool = MCPStreamableHTTPTool(name="weather", url=_tool_url, load_prompts=False, **_tool_kwargs)
 
 _chat_client = _build_chat_client(_credential)
 

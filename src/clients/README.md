@@ -45,9 +45,11 @@ python -m src.clients.run_benchmark \
   --out results.json
 ```
 
-`--model-hosting {foundry,openai}` is mandatory. Every run writes a timestamped
+`--model-hosting {foundry,openai}` is mandatory. `--agent` reads the effective
+tool route saved by its deploy script; use `--tool-mode {direct,toolbox}` to
+label a manual `--base-url` run. Every run writes a timestamped
 JSON artifact under `results/` unless `--out` overrides the path. Its `results`
-array provides comparison-ready rows by protocol and phase, while `turns`
+array provides comparison-ready rows by protocol, phase, and `tool-mode`, while `turns`
 retains the raw measurements and errors.
 
 Generate a self-contained interactive dashboard from every benchmark artifact:

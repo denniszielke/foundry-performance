@@ -2,7 +2,7 @@
 
 Drives one or more protocols against a running agent endpoint and reports
 latency, time-to-first-token (TTFB) and cold-vs-warm-vs-followup behaviour so
-the five agent variations can be compared apples-to-apples.
+the agent variations can be compared apples-to-apples.
 
 ``.env`` (repo root) is loaded automatically, so ``--agent`` alone is enough to
 target any deployed variation — no need to construct a ``--base-url`` by hand
@@ -60,26 +60,31 @@ RESULTS_DIR = Path("results")
 AGENTS: dict[str, dict] = {
     "prompt": {
         "id_env": "WEATHER_PROMPT_AGENT_ID",
+        "tool_mode_env": "WEATHER_PROMPT_AGENT_TOOL_MODE",
         "protocols": ("responses", "a2a", "invocations"),
         "default_auth": "entra",
     },
     "hosted-responses": {
         "id_env": "WEATHER_HOSTED_AGENT_RESPONSES_NAME",
+        "tool_mode_env": "WEATHER_HOSTED_AGENT_RESPONSES_TOOL_MODE",
         "protocols": ("responses", "a2a"),
         "default_auth": "entra",
     },
     "hosted-invocations": {
         "id_env": "WEATHER_HOSTED_AGENT_INVOCATIONS_NAME",
+        "tool_mode_env": "WEATHER_HOSTED_AGENT_INVOCATIONS_TOOL_MODE",
         "protocols": ("invocations", "invocations_ws"),
         "default_auth": "entra",
     },
     "custom-langchain": {
         "url_env": "WEATHER_CUSTOM_AGENT_LANGCHAIN_URL",
+        "tool_mode_env": "WEATHER_CUSTOM_AGENT_LANGCHAIN_TOOL_MODE",
         "protocols": ("responses", "a2a"),
         "default_auth": "none",
     },
     "custom-maf": {
         "url_env": "WEATHER_CUSTOM_AGENT_MAF_URL",
+        "tool_mode_env": "WEATHER_CUSTOM_AGENT_MAF_TOOL_MODE",
         "protocols": tuple(CLIENTS),
         "default_auth": "none",
     },
@@ -225,6 +230,12 @@ def _parse_args() -> argparse.Namespace:
         required=True,
         help="Model inference endpoint used by the agent; recorded in the result artifact.",
     )
+    parser.add_argument(
+        "--tool-mode",
+        choices=["direct", "toolbox"],
+        default=None,
+        help="Weather tool route recorded in the result. Defaults to the deployed agent's saved mode, then direct.",
+    )
     parser.add_argument("--query", default=DEFAULT_QUERY, help="Question to ask each turn.")
     parser.add_argument(
         "--out",
@@ -257,6 +268,7 @@ def _result_payload(
     agent_type: str,
     model_hosting: str,
     model_deployment: str,
+    tool_mode: str,
     iterations: int,
     query: str,
     base_url: str | None,
@@ -271,6 +283,7 @@ def _result_payload(
             "phase": stat.phase,
             "model-hosting": model_hosting,
             "model-deployment": model_deployment,
+            "tool-mode": tool_mode,
             "n": stat.count,
             "err": stat.errors,
             "mean-ms": _milliseconds(stat.mean_s),
@@ -285,6 +298,7 @@ def _result_payload(
         "agent-type": agent_type,
         "model-hosting": model_hosting,
         "model-deployment": model_deployment,
+        "tool-mode": tool_mode,
         "iterations": iterations,
         "query": query,
         "base-url": base_url,
@@ -309,6 +323,11 @@ def main() -> None:
     model = args.model or os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "weather-agent")
 
     cfg = AGENTS[args.agent] if args.agent else None
+    tool_mode = args.tool_mode or (
+        os.environ.get(cfg["tool_mode_env"], os.environ.get("WEATHER_TOOL_MODE", "direct"))
+        if cfg
+        else os.environ.get("WEATHER_TOOL_MODE", "direct")
+    )
     supported = cfg["protocols"] if cfg else tuple(CLIENTS)
     if args.protocols == "all":
         protocols = list(supported)
@@ -356,6 +375,7 @@ def main() -> None:
         agent_type=agent_type,
         model_hosting=args.model_hosting,
         model_deployment=model,
+        tool_mode=tool_mode,
         iterations=args.iterations,
         query=args.query,
         base_url=args.base_url,
