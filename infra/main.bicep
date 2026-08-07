@@ -176,6 +176,7 @@ output OPENAI_API_VERSION string = openAiApiVersion
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = aiProject.outputs.dependentResources.registry.loginServer
 output AZURE_REGISTRY string = aiProject.outputs.dependentResources.registry.loginServer
 output AZURE_CONTAINER_REGISTRY_NAME string = aiProject.outputs.dependentResources.registry.name
+output AZURE_STORAGE_ACCOUNT_NAME string = aiProject.outputs.dependentResources.storage.accountName
 output AZURE_CONTAINER_ENVIRONMENT_NAME string = containerAppsEnv.outputs.name
 output AZURE_MANAGED_IDENTITY_NAME string = identity.outputs.identityName
 

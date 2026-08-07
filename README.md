@@ -1,5 +1,7 @@
 # Foundry performance measurement
 
+BeMad framework
+
 A benchmark for comparing how **weather agents** behave across different hosting
 formats and protocols in [Microsoft Foundry](https://learn.microsoft.com/azure/ai-foundry/).
 It measures, per protocol and per hosting model:
@@ -172,6 +174,45 @@ infra/                  bicep: Foundry + ACR + Container Apps + monitoring
 
 See [AGENTS.md](AGENTS.md) for the full operational runbook (rebuild, redeploy,
 update, troubleshoot, tear down).
+
+## Hosted hypothesis workflow
+
+The repository also contains a separate, non-benchmark hosted agent in
+`src/hosted_hypothesis_agent/`. It formulates a hypothesis, creates a harness
+plan, waits for approval of the exact plan revision and digest, then resumes the
+same logical harness session in execute mode. Workflow and approval state are
+stored in the provisioned Azure Blob Storage account with optimistic concurrency.
+
+Configure three read-only MCP services in `.env`, register them as Foundry
+toolboxes, then deploy the agent:
+
+```dotenv
+INTERNET_RESEARCH_MCP_URL=https://<internet-research-service>/mcp
+CONTEXT_API_MCP_URL=https://<context-api-service>/mcp
+DOCUMENT_SEARCH_MCP_URL=https://<document-search-service>/mcp
+```
+
+For a test deployment, leave any of these three values unset. The registration
+script uses `WEATHER_MCP_URL` as its fallback, so all logical tool categories can
+temporarily target the existing weather MCP server.
+
+```bash
+python -m scripts.register_hypothesis_toolboxes
+python -m scripts.deploy_hosted_hypothesis_agent
+```
+
+Start a workflow and approve the returned revision and digest in a second call:
+
+```bash
+python -m scripts.invoke_hypothesis_agent plan "Investigate the working scenario"
+python -m scripts.invoke_hypothesis_agent decide <workflow-id> <revision> <sha256:digest> approved
+python -m scripts.invoke_hypothesis_agent status <workflow-id>
+```
+
+The Foundry gateway must forward an authenticated caller identity in
+`x-ms-client-object-id`, `x-ms-client-principal-id`, or
+`x-ms-client-principal-name`. The agent fails closed when no caller identity is
+available. `ALLOW_INSECURE_LOCAL_CALLER=true` is provided only for local tests.
 
 ## Run the benchmark
 

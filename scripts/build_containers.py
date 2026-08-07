@@ -20,6 +20,7 @@ IMAGES = [
     ("weather-mcp-server", ROOT / "src" / "weather_mcp_server" / "Dockerfile", "WEATHER_MCP_IMAGE"),
     ("weather-hosted-agent-responses", ROOT / "src" / "hosted_agent_responses" / "Dockerfile", "WEATHER_HOSTED_AGENT_RESPONSES_IMAGE"),
     ("weather-hosted-agent-invocations", ROOT / "src" / "hosted_agent_invocations" / "Dockerfile", "WEATHER_HOSTED_AGENT_INVOCATIONS_IMAGE"),
+    ("scenario-hosted-hypothesis-agent", ROOT / "src" / "hosted_hypothesis_agent" / "Dockerfile", "HYPOTHESIS_HOSTED_AGENT_IMAGE"),
     ("weather-custom-agent-maf", ROOT / "src" / "custom_agent_maf" / "Dockerfile", "WEATHER_CUSTOM_AGENT_MAF_IMAGE"),
     ("weather-custom-agent-langchain", ROOT / "src" / "custom_agent_langchain" / "Dockerfile", "WEATHER_CUSTOM_AGENT_LANGCHAIN_IMAGE"),
 ]
