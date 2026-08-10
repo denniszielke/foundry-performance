@@ -8,6 +8,7 @@ transport; the runner drives them and reports a comparison table.
 | name             | transport            | endpoint                       | streams (TTFB) |
 |------------------|----------------------|--------------------------------|----------------|
 | `responses`      | HTTP + SSE           | `POST /responses`              | yes            |
+| `responses-store`| HTTP + SSE           | `POST /responses` (`store=true`)| yes            |
 | `invocations`    | HTTP                 | `POST /invocations`            | no             |
 | `invocations_ws` | WebSocket            | `/invocations_ws`              | yes            |
 | `a2a`            | HTTP (JSON-RPC)      | `POST /a2a` or `/a2a/{assistant_id}` | no          |
@@ -27,6 +28,10 @@ Phases answer the questions from the scenario:
 - **followup** — a second turn that reuses a primed session ("follow up request
   on existing sessions").
 
+For `responses-store`, reuse means API-managed chaining: the priming response
+is stored and its ID is sent as `previous_response_id` on the measured turn.
+The regular `responses` client instead reuses `agent_session_id`.
+
 ## Usage
 
 ```bash
@@ -43,6 +48,13 @@ python -m src.clients.run_benchmark \
   --model-hosting foundry \
   --iterations 20 \
   --out results.json
+
+# Compare the two Responses API state configurations on a Foundry agent
+python -m src.clients.run_benchmark \
+  --agent hosted-responses \
+  --protocols responses,responses-store \
+  --model-hosting foundry \
+  --iterations 20
 ```
 
 `--model-hosting {foundry,openai}` is mandatory. `--agent` reads the effective

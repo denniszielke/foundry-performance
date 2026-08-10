@@ -20,6 +20,7 @@ variations is *where the agent runs* and *how it reaches the tool*.
 | protocol         | transport        | endpoint                    |
 |------------------|------------------|-----------------------------|
 | responses        | HTTP + SSE       | `POST /responses`           |
+| responses-store  | HTTP + SSE       | `POST /responses` (`store=true`) |
 | invocations      | HTTP             | `POST /invocations`         |
 | invocations_ws   | WebSocket        | `/invocations_ws`           |
 | a2a              | HTTP (JSON-RPC)  | `POST /a2a` or `/a2a/{assistant_id}` |
@@ -31,8 +32,8 @@ Central US**, so provision in `northcentralus`.
 
 | # | variation                     | hosting                         | protocol(s)                          | tool access                     | code |
 |---|-------------------------------|----------------------------------|---------------------------------------|----------------------------------|------|
-| 1 | **prompt agent**              | Foundry-native (no container)    | responses, a2a, invocations          | selectable MCP route           | `scripts/deploy_prompt_agent.py` |
-| 2 | **hosted agent (responses)**  | Foundry-hosted **container**    | responses, a2a (fronted by Foundry)  | selectable MCP route           | `src/hosted_agent_responses/` |
+| 1 | **prompt agent**              | Foundry-native (no container)    | responses, responses-store, a2a, invocations | selectable MCP route           | `scripts/deploy_prompt_agent.py` |
+| 2 | **hosted agent (responses)**  | Foundry-hosted **container**    | responses, responses-store, a2a (fronted by Foundry) | selectable MCP route           | `src/hosted_agent_responses/` |
 | 3 | **hosted agent (invocations)**| Foundry-hosted **container**    | invocations, invocations_ws          | selectable MCP route           | `src/hosted_agent_invocations/` |
 | 4 | **custom MAF agent**          | Azure Container App (outside Foundry) | responses, invocations, invocations_ws, a2a | selectable MCP route | `src/custom_agent_maf/` |
 | 5 | **custom agent (LangChain)**  | Azure Container App (outside Foundry) | responses, a2a | selectable MCP route | `src/custom_agent_langchain/` |
@@ -221,9 +222,19 @@ derived automatically from `.env` (loaded by the script itself — no need to
 `source .env` first). `--protocols` narrows to a subset (default `all`, scoped
 to whatever that variation supports — see the table above).
 
+`responses-store` is a second configuration of the Responses API for the
+Foundry-managed prompt and hosted-responses agents. It explicitly sends
+`store=true`, captures the returned response ID, and sends it as
+`previous_response_id` on the follow-up turn. The regular `responses`
+configuration continues to reuse `agent_session_id`, so running both labels
+compares API-managed response chaining with agent-session state.
+
 ```bash
 # 1. prompt agent — Foundry-native, responses + a2a + invocations
 python -m src.clients.run_benchmark --agent prompt --protocols a2a,responses --model-hosting foundry --iterations 5
+
+# Compare agent-session state with stored Responses API chaining
+python -m src.clients.run_benchmark --agent prompt --protocols responses,responses-store --model-hosting foundry --iterations 5
 
 # 2. hosted agent, responses variation — responses + a2a (fronted natively by Foundry)
 python -m src.clients.run_benchmark --agent hosted-responses --protocols a2a,responses --model-hosting foundry --iterations 5
