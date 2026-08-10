@@ -22,5 +22,7 @@ hooks:
     #   python -m scripts.deploy_hosted_agent_responses
     #   python -m scripts.deploy_hosted_agent_invocations
     #   python -m scripts.deploy_custom_agent_maf
+    #   python -m scripts.register_hypothesis_toolboxes
+    #   python -m scripts.deploy_hosted_hypothesis_agent
     #
     # See README.md and AGENTS.md for the full runbook.

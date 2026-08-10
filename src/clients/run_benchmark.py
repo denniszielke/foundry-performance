@@ -61,13 +61,13 @@ AGENTS: dict[str, dict] = {
     "prompt": {
         "id_env": "WEATHER_PROMPT_AGENT_ID",
         "tool_mode_env": "WEATHER_PROMPT_AGENT_TOOL_MODE",
-        "protocols": ("responses", "a2a", "invocations"),
+        "protocols": ("responses", "responses-store", "a2a", "invocations"),
         "default_auth": "entra",
     },
     "hosted-responses": {
         "id_env": "WEATHER_HOSTED_AGENT_RESPONSES_NAME",
         "tool_mode_env": "WEATHER_HOSTED_AGENT_RESPONSES_TOOL_MODE",
-        "protocols": ("responses", "a2a"),
+        "protocols": ("responses", "responses-store", "a2a"),
         "default_auth": "entra",
     },
     "hosted-invocations": {
@@ -85,7 +85,7 @@ AGENTS: dict[str, dict] = {
     "custom-maf": {
         "url_env": "WEATHER_CUSTOM_AGENT_MAF_URL",
         "tool_mode_env": "WEATHER_CUSTOM_AGENT_MAF_TOOL_MODE",
-        "protocols": tuple(CLIENTS),
+        "protocols": tuple(protocol for protocol in CLIENTS if protocol != "responses-store"),
         "default_auth": "none",
     },
 }
@@ -117,7 +117,7 @@ def _resolve_base_url(agent: str, protocol: str) -> str:
     agent_id = _require_env(cfg["id_env"], f"run the matching `python -m scripts.deploy_*` for '{agent}'")
     # The OpenAI-compatible responses protocol lives one path segment deeper
     # than the other native protocols (a2a, invocations, invocations_ws).
-    suffix = "/openai" if protocol == "responses" else ""
+    suffix = "/openai" if protocol.startswith("responses") else ""
     return f"{endpoint}/agents/{agent_id}/endpoint/protocols{suffix}"
 
 
@@ -139,7 +139,9 @@ async def _bench_protocol(
     cls = client_cls or CLIENTS[name]
     turns: list[Turn] = []
     make = (
-        (lambda: cls(base_url, model, auth=auth)) if cls is ResponsesClient else (lambda: cls(base_url, auth=auth))
+        (lambda: cls(base_url, model, auth=auth))
+        if issubclass(cls, ResponsesClient)
+        else (lambda: cls(base_url, auth=auth))
     )
 
     async with make() as client:

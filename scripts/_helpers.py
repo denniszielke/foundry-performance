@@ -98,6 +98,29 @@ def registry_name() -> str:
     return endpoint.split(".", 1)[0]
 
 
+def storage_account_name() -> str:
+    """Return the workflow storage account, discovering it for older azd environments."""
+    if name := env("AZURE_STORAGE_ACCOUNT_NAME"):
+        return name
+    output = run(
+        [
+            "az", "storage", "account", "list",
+            "--resource-group", env("AZURE_RESOURCE_GROUP", required=True),
+            "--subscription", env("AZURE_SUBSCRIPTION_ID", required=True),
+            "--query", "[].name", "-o", "tsv",
+        ],
+        capture=True,
+    )
+    names = [item.strip() for item in output.splitlines() if item.strip()]
+    if len(names) != 1:
+        sys.exit(
+            "ERROR: AZURE_STORAGE_ACCOUNT_NAME is not set and storage discovery "
+            f"found {len(names)} accounts in the resource group. Set it explicitly."
+        )
+    save_env({"AZURE_STORAGE_ACCOUNT_NAME": names[0]})
+    return names[0]
+
+
 def container_env_default_domain() -> str:
     """Default domain of the Container Apps environment (for FQDN prediction)."""
     return run(
@@ -234,11 +257,11 @@ def project_client() -> Any:
 # --------------------------------------------------------------------------- #
 # Toolbox RBAC (hosted agent → Foundry toolbox)
 # --------------------------------------------------------------------------- #
-# "Foundry User" data-plane role. A Foundry-hosted agent runs as the AI account's
-# system-assigned identity; without this role its calls to project toolboxes are
-# rejected with HTTP 401.
+# "Foundry User" data-plane role. Both the AI account identity and each hosted
+# agent version's instance identity may need it for project toolbox calls.
 FOUNDRY_USER_ROLE_ID = "53ca6127-db72-4b80-b1b0-d745d6d5456d"
 COGNITIVE_SERVICES_OPENAI_USER_ROLE_ID = "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd"
+STORAGE_BLOB_DATA_CONTRIBUTOR_ROLE_ID = "ba92f5b4-2d11-453d-a403-e96b0029c9fe"
 
 
 def _account_resource_id() -> str:
@@ -250,9 +273,9 @@ def _account_resource_id() -> str:
 def account_principal_id() -> str:
     """System-assigned managed identity principal id of the AI Services account.
 
-    This is the single identity every Foundry-hosted component in this repo
-    runs as (there's no per-agent Entra Agent Identity here), so it's the
-    target for both the toolbox role and the observability app role grants.
+    This account-level identity remains the target for shared services and
+    observability grants. Hosted versions also expose an instance identity,
+    which deployment scripts grant separately after the version is active.
     Returns ``""`` if the account has no system-assigned identity.
     """
     account_id = _account_resource_id()
@@ -284,6 +307,52 @@ def ensure_openai_role(principal_id: str) -> None:
         return
     _grant_account_role(principal_id, "ServicePrincipal", COGNITIVE_SERVICES_OPENAI_USER_ROLE_ID)
     print("  ↳ OpenAI role (Cognitive Services OpenAI User) ready for the hosted agent identity")
+
+
+def ensure_toolbox_role_for_hosted_agent(principal_id: str) -> None:
+    """Grant a hosted agent version's instance identity access to Foundry toolboxes."""
+    if not principal_id:
+        print("  ↳ hosted agent has no instance identity; skipping toolbox role grant")
+        return
+    _grant_toolbox_role(principal_id, "ServicePrincipal")
+    print("  ↳ toolbox role (Foundry User) ready for the hosted agent identity")
+
+
+def ensure_storage_blob_role(principal_id: str | None = None) -> None:
+    """Grant an account or hosted-agent identity access to the workflow blob store."""
+    identity_label = "hosted agent identity" if principal_id else "account identity"
+    principal_id = principal_id or account_principal_id()
+    if not principal_id:
+        print(f"  ↳ {identity_label} unavailable; skipping storage role grant")
+        return
+    storage_id = run(
+        [
+            "az", "storage", "account", "show",
+            "--name", storage_account_name(),
+            "--resource-group", env("AZURE_RESOURCE_GROUP", required=True),
+            "--query", "id", "-o", "tsv",
+        ],
+        capture=True,
+    )
+    existing = run(
+        [
+            "az", "role", "assignment", "list",
+            "--assignee", principal_id,
+            "--scope", storage_id,
+            "--role", STORAGE_BLOB_DATA_CONTRIBUTOR_ROLE_ID,
+            "--query", "[].id", "-o", "tsv",
+        ],
+        capture=True,
+    )
+    if not existing:
+        run([
+            "az", "role", "assignment", "create",
+            "--assignee-object-id", principal_id,
+            "--assignee-principal-type", "ServicePrincipal",
+            "--role", STORAGE_BLOB_DATA_CONTRIBUTOR_ROLE_ID,
+            "--scope", storage_id,
+        ])
+    print(f"  ↳ Storage Blob Data Contributor ready for the {identity_label}")
 
 
 def signed_in_user_principal_id() -> str:

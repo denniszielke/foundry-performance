@@ -14,6 +14,7 @@ architecture see [README.md](README.md).
 | hosted agent, invocations (var 3) | Foundry-hosted container    | `scripts.deploy_hosted_agent_invocations`  | `WEATHER_HOSTED_AGENT_INVOCATIONS_NAME` |
 | custom MAF agent (var 4)          | Azure Container App          | `scripts.deploy_custom_agent_maf`          | `WEATHER_CUSTOM_AGENT_MAF_URL` |
 | custom LangChain agent (var 5)    | Azure Container App          | `scripts.deploy_custom_agent_langchain`    | `WEATHER_CUSTOM_AGENT_LANGCHAIN_URL` |
+| hypothesis workflow agent         | Foundry-hosted container     | `scripts.deploy_hosted_hypothesis_agent`   | `HYPOTHESIS_HOSTED_AGENT_NAME` |
 
 All scripts are run from the repo root as `python -m scripts.<name>`, read
 `./.env`, and use `DefaultAzureCredential` / the Azure CLI login. Run
@@ -70,6 +71,20 @@ python -m scripts.deploy_custom_agent_maf
 python -m scripts.deploy_custom_agent_langchain
 ```
 
+The hypothesis workflow is independent of the weather benchmark. Configure
+`INTERNET_RESEARCH_MCP_URL`, `CONTEXT_API_MCP_URL`, and
+`DOCUMENT_SEARCH_MCP_URL`, then run:
+
+```bash
+python -m scripts.register_hypothesis_toolboxes
+python -m scripts.deploy_hosted_hypothesis_agent
+```
+
+Its invocations are two-phase: `plan` returns an `awaiting_approval` record;
+`decide ... approved` must echo that record's exact revision and SHA-256 digest.
+State is persisted in the provisioned Blob Storage account. Use
+`python -m scripts.invoke_hypothesis_agent --help` for client commands.
+
 Set `WEATHER_TOOL_MODE=toolbox` before the agent deploy commands to benchmark
 the toolbox path. The default is `direct`. Redeploy every agent after changing
 the mode; each deploy script records its effective mode for benchmark metadata.
@@ -82,10 +97,11 @@ Agent Server requires the backing services and license documented by LangChain.
 
 ### Re-grant hosted-agent permissions
 
-The hosted agents run as the AI Services account's system-assigned identity
-(there's no per-agent Entra Agent Identity in this repo). Redundant with the
-inline grant in the deploy scripts, but useful to re-check or re-apply without
-a redeploy:
+Shared hosted-agent services use the AI Services account's system-assigned
+identity. Hosted versions can also expose a distinct instance identity; the
+hypothesis-agent deploy grants that identity Foundry User, Cognitive Services
+OpenAI User, and Storage Blob Data Contributor after activation. The command
+below re-grants the shared account-level permissions without a redeploy:
 
 ```bash
 python -m scripts.grant_agent_permissions               # toolbox role + Agent 365 OtelWrite

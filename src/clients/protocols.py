@@ -93,17 +93,24 @@ class ResponsesClient(_HttpClient):
 
     name = "responses"
     supports_ttfb = True
+    store_responses = False
 
     def __init__(self, base_url: str, model: str = "weather-agent", auth: httpx.Auth | None = None) -> None:
         super().__init__(base_url, auth=auth)
         self.model = model
+        self._previous_response_ids: dict[str, str] = {}
 
     async def call(self, timer: Timer, query: str, session_id: str | None = None) -> str:
         params = self._foundry_params()
-        if session_id:
+        if session_id and not self.store_responses:
             params["agent_session_id"] = session_id
         body = {"model": self.model, "input": query, "stream": True}
+        if self.store_responses:
+            body["store"] = True
+            if session_id and (previous_response_id := self._previous_response_ids.get(session_id)):
+                body["previous_response_id"] = previous_response_id
         chunks: list[str] = []
+        response_id: str | None = None
         async with self.http.stream("POST", f"{self.base_url}/responses", json=body, params=params or None) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():
@@ -119,6 +126,9 @@ class ResponsesClient(_HttpClient):
                 if isinstance(obj, dict) and obj.get("type") == "response.failed":
                     error = obj.get("response", {}).get("error") or obj.get("error") or obj
                     raise RuntimeError(f"Responses API failed: {error}")
+                response = obj.get("response") if isinstance(obj, dict) else None
+                if isinstance(response, dict) and isinstance(response.get("id"), str):
+                    response_id = response["id"]
                 delta = obj.get("delta") if isinstance(obj, dict) else None
                 if isinstance(delta, str) and delta:
                     timer.first_byte()
@@ -126,7 +136,18 @@ class ResponsesClient(_HttpClient):
         text = "".join(chunks)
         if not text:
             raise RuntimeError("Responses API completed without assistant text")
+        if self.store_responses and session_id:
+            if response_id is None:
+                raise RuntimeError("Stored Responses API call completed without a response ID")
+            self._previous_response_ids[session_id] = response_id
         return text
+
+
+class StoredResponsesClient(ResponsesClient):
+    """Responses API with server-side storage and response-ID chaining."""
+
+    name = "responses-store"
+    store_responses = True
 
 
 class InvocationsClient(_HttpClient):
@@ -311,6 +332,7 @@ class LangGraphA2aClient(A2aClient):
 
 CLIENTS: dict[str, type[_HttpClient]] = {
     ResponsesClient.name: ResponsesClient,
+    StoredResponsesClient.name: StoredResponsesClient,
     InvocationsClient.name: InvocationsClient,
     InvocationsWsClient.name: InvocationsWsClient,
     A2aClient.name: A2aClient,

@@ -1,0 +1,1 @@
+"""AG-UI frontend adapter for the hosted hypothesis workflow."""
