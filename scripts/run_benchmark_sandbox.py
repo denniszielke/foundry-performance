@@ -348,15 +348,22 @@ def sandbox_env_file(values: dict[str, str], token: str | None) -> str:
 def download_results(sandbox, matrix: list[BatchRun], destination: Path) -> None:
     """Copy every result file produced in the sandbox to ``destination``."""
     destination.mkdir(parents=True, exist_ok=True)
-    listing = sandbox.list_files(SANDBOX_RESULTS_DIR)
-    names = {entry.name for entry in getattr(listing, "entries", []) or []}
+    try:
+        listing = sandbox.list_files(SANDBOX_RESULTS_DIR)
+    except Exception as error:  # noqa: BLE001 - an empty/missing directory must not lose the summary
+        print(f"  ↳ could not list {SANDBOX_RESULTS_DIR}: {error}")
+        return
+    names = {entry.name for entry in listing.entries or []}
     for item in matrix:
         if item.result_file not in names:
             print(f"  ↳ no result file for {item.agent} (run failed?)")
             continue
-        content = sandbox.read_file(f"{SANDBOX_RESULTS_DIR}/{item.result_file}")
         target = destination / item.result_file
-        target.write_bytes(content)
+        try:
+            target.write_bytes(sandbox.read_file(f"{SANDBOX_RESULTS_DIR}/{item.result_file}"))
+        except Exception as error:  # noqa: BLE001 - keep downloading the remaining results
+            print(f"  ↳ could not download {item.result_file}: {error}")
+            continue
         item.downloaded = str(target)
         print(f"  ↳ downloaded {target}")
 
