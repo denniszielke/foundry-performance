@@ -33,6 +33,8 @@ Written by `azd up` (copied to `./.env` by the `azure.yaml` postdeploy hook):
 - `AZURE_CONTAINER_ENVIRONMENT_NAME` — Container Apps environment
 - `AZURE_MANAGED_IDENTITY_NAME` — user-assigned identity (ACR pull for apps)
 - `AZURE_RESOURCE_GROUP`, `AZURE_LOCATION`
+- `AZURE_PRIVATE_NETWORKING` — whether the Foundry account is network injected
+- `AZURE_VNET_NAME` / `AZURE_VNET_ID` / `AZURE_AGENT_SUBNET_ID` / `AZURE_SANDBOX_SUBNET_ID`
 
 Optional deployment sizing (defaults shown):
 
@@ -49,9 +51,19 @@ See `.env.sample` for the complete list.
 ## Provision infrastructure
 
 ```bash
-azd up            # first time (prompts for env name, region, subscription)
+azd up            # first time (prompts for env name, region, subscription,
+                  # and enablePrivateNetworking)
 azd provision     # re-run infra only after editing infra/*.bicep
 ```
+
+`enablePrivateNetworking` is prompted because `ENABLE_PRIVATE_NETWORKING` has
+no default in `infra/main.parameters.json`. Answer it up front with
+`azd env set ENABLE_PRIVATE_NETWORKING true|false`. When true, the AI Services
+account gets `publicNetworkAccess=Disabled`, `networkInjections` into
+`agent-subnet`, and private endpoints/DNS zones from
+`infra/core/network/private-endpoints.bicep`; the endpoint is then only
+reachable from inside the VNet (deploy the agents before enabling it, and
+benchmark from the sandbox).
 
 Region must be `northcentralus` while `invocations_ws` is in preview.
 `ENABLE_HOSTED_AGENTS=true` (default) creates the ACR + Foundry ACR connection
@@ -151,6 +163,26 @@ python -m src.clients.run_benchmark --base-url http://127.0.0.1:8088 \
   --iterations 20 --out results.json
 ```
 
+### Run a benchmark batch in an ACA sandbox
+
+```bash
+python -m scripts.run_benchmark_sandbox --agents all --protocols all \
+  --model-hosting foundry --iterations 20
+python -m scripts.run_benchmark_sandbox --agents custom-maf --protocols responses \
+  --model-hosting openai --iterations 10 --network public --results-dir results/batch-01
+```
+
+Boots a sandbox in the `sbx-$AZURE_ENV_NAME` sandbox group, downloads the repo
+(`--repo-url`/`--repo-ref`, defaults to the `origin` remote at `HEAD`),
+installs `src/clients/requirements.txt`, runs one benchmark per
+agent/protocol combination and downloads all result files plus
+`batch-summary.json`. `--network auto` (default) joins the sandbox to
+`sandbox-subnet` when `AZURE_PRIVATE_NETWORKING=true`; `public` reaches the
+agents through the ACA egress proxy under a deny-by-default allowlist derived
+from `.env` (extend it with `--egress-allow`). The sandbox is deleted at the
+end unless `--keep-sandbox` is passed. The commit under test must be pushed —
+the sandbox downloads it from GitHub.
+
 ## Run locally (no Azure hosting for the container)
 
 ```bash
@@ -192,6 +224,12 @@ The agent still needs a real Foundry project + model for inference
   portal; confirm Foundry can pull the image from ACR (the ACR connection is
   created when `ENABLE_HOSTED_AGENTS=true`).
 - **`invocations_ws` fails** — confirm the region is `northcentralus`.
+- **Sandbox exec/data-plane calls return 403** — the signed-in user needs
+  `Container Apps SandboxGroup Data Owner` on the resource group; the script
+  grants it and waits 60s, but propagation can take longer. Re-run it.
+- **Sandbox benchmark gets 401 from Foundry** — the injected token expired
+  (batches longer than an hour) or the run used `--network public` against a
+  privately deployed account. Re-run, or switch to `--network private`.
 - **No traces in App Insights** — confirm
   `APPLICATIONINSIGHTS_CONNECTION_STRING` is set for the component.
 - **Protocol rejected on `deploy_hosted_agent_responses` / `deploy_hosted_agent_invocations`**
@@ -202,5 +240,7 @@ The agent still needs a real Foundry project + model for inference
 
 ```bash
 python -m scripts.delete_agents   # Foundry agents + toolbox
+az resource delete --resource-group "$AZURE_RESOURCE_GROUP" \
+  --resource-type Microsoft.App/sandboxGroups --name "sbx-$AZURE_ENV_NAME"
 azd down                          # all Azure resources
 ```
