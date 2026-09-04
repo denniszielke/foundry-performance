@@ -34,7 +34,7 @@ Central US**, so provision in `northcentralus`.
 |---|-------------------------------|----------------------------------|---------------------------------------|----------------------------------|------|
 | 1 | **prompt agent**              | Foundry-native (no container)    | responses, responses-store, a2a, invocations | selectable MCP route           | `scripts/deploy_prompt_agent.py` |
 | 2 | **hosted agent (responses)**  | Foundry-hosted **container**    | responses, responses-store, a2a (fronted by Foundry) | selectable MCP route           | `src/hosted_agent_responses/` |
-| 3 | **hosted agent (invocations)**| Foundry-hosted **container**    | invocations, invocations_ws          | selectable MCP route           | `src/hosted_agent_invocations/` |
+| 3 | **hosted agent (invocations)**| Foundry-hosted **container**    | invocations                          | selectable MCP route           | `src/hosted_agent_invocations/` |
 | 4 | **custom MAF agent**          | Azure Container App (outside Foundry) | responses, invocations, invocations_ws, a2a | selectable MCP route | `src/custom_agent_maf/` |
 | 5 | **custom agent (LangChain)**  | Azure Container App (outside Foundry) | responses, a2a | selectable MCP route | `src/custom_agent_langchain/` |
 
@@ -97,7 +97,7 @@ flowchart LR
 src/
   weather_mcp_server/     FastMCP weather tools — random data, no auth
   hosted_agent_responses/  variation 2 — self-contained, native ResponsesAgentServerHost only; a2a fronted natively by Foundry + Dockerfile (tool via toolbox)
-  hosted_agent_invocations/ variation 3 — self-contained, native InvocationAgentServerHost only (invocations + invocations_ws) + Dockerfile (tool via toolbox)
+  hosted_agent_invocations/ variation 3 — self-contained, native InvocationAgentServerHost only (invocations) + Dockerfile (tool via toolbox)
   custom_agent_maf/       variation 4 — native Microsoft Agent Framework multi-protocol host + Dockerfile (direct MCP)
   custom_agent_langchain/ variation 5 — Agent Server A2A + custom Responses route + Dockerfile (direct MCP)
   custom_agent_harness/   interactive plan-and-execute console (direct MCP)
@@ -275,7 +275,7 @@ python -m src.clients.run_benchmark --agent prompt --protocols responses,respons
 python -m src.clients.run_benchmark --agent hosted-responses --protocols a2a,responses --model-hosting foundry --iterations 5
 python -m src.clients.run_benchmark --agent hosted-responses --protocols a2a,responses --model-hosting openai --iterations 5
 
-# 3. hosted agent, invocations variation — invocations + invocations_ws
+# 3. hosted agent, invocations variation — invocations
 python -m src.clients.run_benchmark --agent hosted-invocations --protocols all --model-hosting foundry --iterations 5
 python -m src.clients.run_benchmark --agent hosted-invocations --protocols all --model-hosting openai --iterations 5
 
@@ -306,8 +306,8 @@ python -m scripts.run_benchmark_sandbox \
 
 # a subset, results in a named directory, sandbox kept for inspection
 python -m scripts.run_benchmark_sandbox \
-  --agents custom-maf,hosted-responses --protocols responses,a2a \
-  --model-hosting openai --iterations 10 \
+  --agents custom-maf,hosted-responses --protocols all \
+  --model-hosting foundry --iterations 10 \
   --results-dir results/batch-01 --keep-sandbox
 ```
 

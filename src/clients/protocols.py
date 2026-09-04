@@ -188,6 +188,7 @@ class AgUiInvocationsClient(_HttpClient):
             "tools": [],
             "context": [],
             "state": {},
+            "forwardedProps": {},
         }
         chunks: list[str] = []
         async with self.http.stream(

@@ -2,29 +2,30 @@
 # with conflicting transitive versions stay in src/*/requirements.txt.
 
 # --- Weather MCP server (src/weather_mcp_server) ---------------------------
-fastmcp==3.4.5
+fastmcp==3.4.7
 mcp==1.28.1
-uvicorn==0.51.0
+uvicorn==0.52.4
 
 # --- Weather agents (src/hosted_agent_responses, src/hosted_agent_invocations, src/custom_agent_maf) ---
 # Microsoft Agent Framework + azure-ai-agentserver protocol hosts.
-agent-framework-core==1.12.1
-agent-framework-foundry==1.10.3
-agent-framework-openai==1.11.0
+agent-framework-core==1.16.0
+agent-framework-foundry==1.11.0
+agent-framework-openai==1.14.1
 # Built-in ResponsesHostServer (hosted_agent_responses); pulls in
 # azure-ai-agentserver-core/-responses transitively.
-agent-framework-foundry-hosting==1.0.0b260722
-azure-ai-agentserver-invocations==1.0.0b7
+agent-framework-foundry-hosting==1.0.0b260827
+azure-ai-agentserver-invocations==1.2.0b1
 # Native invocations AG-UI host with Toolbox MCP.
-ag-ui-protocol==0.1.16
+ag-ui-protocol==0.1.21
 openai==2.32.0
-pydantic-ai-slim[ag-ui,mcp,openai]==1.75.0
+# Root is capped by agent-framework-openai<3; hosted invocations installs 3.x separately.
+pydantic-ai-slim[ag-ui,mcp,openai]==1.107.5
 # Native A2A serving (AgentCard field names have drifted across releases).
-a2a-sdk>=0.3.0
+a2a-sdk==1.1.2
 
 # --- Benchmark clients (src/clients) ---------------------------------------
 httpx==0.28.1
-websockets==16.1.1
+websockets==17.1
 
 # --- Sandbox benchmark runner (scripts/run_benchmark_sandbox.py) -----------
 # Azure Container Apps sandboxes (preview) used to run the benchmark batch
@@ -32,10 +33,10 @@ websockets==16.1.1
 azure-containerapps-sandbox==0.1.0b4
 
 # --- Deployment scripts (scripts/, Foundry management plane) ---------------
-# azure-ai-projects is capped at <2.4.0 by agent-framework-foundry 1.10.3.
+# azure-ai-projects is capped at <2.4.0 by agent-framework-foundry 1.11.0.
 azure-ai-projects==2.3.0
 
 # --- Shared Azure SDKs + telemetry -----------------------------------------
-azure-identity==1.25.3
+azure-identity==1.26.0b2
 azure-monitor-opentelemetry==1.8.9
-python-dotenv==1.2.2
+python-dotenv==1.2.3

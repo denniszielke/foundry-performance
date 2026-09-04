@@ -1,14 +1,24 @@
+import json
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from scripts.run_benchmark_sandbox import (
     BatchRun,
     agent_egress_hosts,
     benchmark_command,
+    bootstrap_sandbox,
     build_matrix,
+    download_results,
     egress_host_patterns,
     repo_tarball_url,
     resolve_agents,
+    run_benchmark_detached,
     sandbox_env_file,
+    parse_args,
+    write_report,
 )
 
 KNOWN = {
@@ -50,6 +60,44 @@ class BuildMatrixTests(unittest.TestCase):
 
 
 class CommandTests(unittest.TestCase):
+    @patch("scripts.run_benchmark_sandbox.time.sleep")
+    def test_detached_benchmark_polls_and_returns_log(self, _sleep) -> None:
+        class Sandbox:
+            def __init__(self):
+                self.status_calls = 0
+
+            def exec(self, command, *, working_directory):
+                if "nohup sh -c" in command:
+                    return SimpleNamespace(exit_code=0, stdout="", stderr="")
+                self.status_calls += 1
+                value = "RUNNING" if self.status_calls == 1 else "0"
+                return SimpleNamespace(exit_code=0, stdout=value, stderr="")
+
+            def read_file(self, path):
+                return b"benchmark complete\n"
+
+        result = run_benchmark_detached(Sandbox(), "python3 benchmark.py", label="custom-maf", timeout=30)
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(result.stdout, "benchmark complete\n")
+
+    def test_exec_timeout_defaults_to_one_hour(self) -> None:
+        argv = ["runner", "--agents", "prompt", "--model-hosting", "foundry"]
+        with patch("sys.argv", argv):
+            args = parse_args(["prompt"])
+
+        self.assertEqual(args.exec_timeout, 3600)
+
+    def test_exec_timeout_can_be_overridden(self) -> None:
+        argv = [
+            "runner", "--agents", "prompt", "--model-hosting", "foundry",
+            "--exec-timeout", "7200",
+        ]
+        with patch("sys.argv", argv):
+            args = parse_args(["prompt"])
+
+        self.assertEqual(args.exec_timeout, 7200)
+
     def test_benchmark_command_carries_every_flag(self) -> None:
         command = benchmark_command(
             BatchRun(agent="prompt", protocols=("responses", "a2a"), result_file="benchmark-prompt.json"),
@@ -64,6 +112,7 @@ class CommandTests(unittest.TestCase):
         self.assertIn("--iterations 25", command)
         self.assertIn("--auth none", command)
         self.assertIn("/work/results/benchmark-prompt.json", command)
+        self.assertIn("PYTHONPATH=/work/.python-packages python3", command)
         # The free-text query must not be able to break out of the command.
         self.assertIn("'What is the current weather in Berlin?'", command)
 
@@ -84,6 +133,7 @@ class EgressTests(unittest.TestCase):
         values = {"AZURE_AI_PROJECT_ENDPOINT": "https://acct.services.ai.azure.com/api/projects/p"}
         patterns = egress_host_patterns(values, ("pypi.org", "proxy.internal"), include_identity=False)
         self.assertIn("pypi.org", patterns)
+        self.assertIn("bootstrap.pypa.io", patterns)
         self.assertIn("codeload.github.com", patterns)
         self.assertIn("acct.services.ai.azure.com", patterns)
         self.assertIn("proxy.internal", patterns)
@@ -96,6 +146,68 @@ class EgressTests(unittest.TestCase):
 
 
 class BootstrapTests(unittest.TestCase):
+    def test_download_results_recovers_available_files(self) -> None:
+        matrix = [
+            BatchRun(agent="custom-maf", protocols=("responses",), result_file="custom.json"),
+            BatchRun(agent="prompt", protocols=("responses",), result_file="prompt.json"),
+        ]
+
+        class Sandbox:
+            def list_files(self, path):
+                return SimpleNamespace(entries=[SimpleNamespace(name="custom.json")])
+
+            def read_file(self, path):
+                return b'{"results": []}\n'
+
+        with TemporaryDirectory() as directory:
+            destination = Path(directory)
+            download_results(Sandbox(), matrix, destination)
+
+            self.assertEqual((destination / "custom.json").read_bytes(), b'{"results": []}\n')
+            self.assertEqual(matrix[0].downloaded, str(destination / "custom.json"))
+            self.assertIsNone(matrix[1].downloaded)
+
+    def test_write_report_includes_every_batch_benchmark_file(self) -> None:
+        run = {
+            "datetime": "2026-09-04T12:00:00Z",
+            "agent-type": "placeholder",
+            "model-hosting": "foundry",
+            "model-deployment": "test-model",
+            "results": [],
+        }
+        with TemporaryDirectory() as directory:
+            destination = Path(directory)
+            for agent in ("custom-maf", "prompt"):
+                payload = {**run, "agent-type": agent}
+                (destination / f"benchmark-{agent}.json").write_text(json.dumps(payload), encoding="utf-8")
+            (destination / "batch-summary.json").write_text("{}", encoding="utf-8")
+
+            report = write_report(destination)
+            html = report.read_text(encoding="utf-8")
+
+            self.assertIn('"agent-type":"custom-maf"', html)
+            self.assertIn('"agent-type":"prompt"', html)
+            self.assertNotIn('"source":"batch-summary.json"', html)
+
+    def test_bootstrap_creates_workdir_from_root(self) -> None:
+        calls = []
+
+        class Sandbox:
+            def exec(self, command, *, working_directory):
+                calls.append((command, working_directory))
+                return SimpleNamespace(exit_code=0, stdout="", stderr="")
+
+            def write_file(self, path, content):
+                pass
+
+        bootstrap_sandbox(Sandbox(), tarball_url="https://example.test/repo.tar.gz", env_file="")
+
+        self.assertEqual(calls[0][1], "/")
+        self.assertEqual(calls[1][1], "/work")
+        self.assertIn("bootstrap.pypa.io/pip/pip.pyz", calls[2][0])
+        self.assertIn("--target /work/.python-packages", calls[2][0])
+        self.assertNotIn("-m venv", calls[2][0])
+
     def test_tarball_url_from_https_remote(self) -> None:
         self.assertEqual(
             repo_tarball_url("https://github.com/denniszielke/foundry-performance.git", "main"),

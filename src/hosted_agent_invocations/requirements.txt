@@ -1,6 +1,8 @@
 # Hosted weather agent — official AG-UI invocations pattern with Toolbox MCP.
-azure-ai-agentserver-invocations==1.0.0b7
-azure-identity==1.25.3
-ag-ui-protocol==0.1.16
-openai==2.32.0
-pydantic-ai-slim[ag-ui,mcp,openai]==1.75.0
+azure-ai-agentserver-invocations==1.2.0b1
+azure-identity==1.26.0b2
+ag-ui-protocol==0.1.21
+openai==3.5.0
+pydantic-ai-slim[ag-ui,mcp,openai]==2.35.3
+mcp==2.1.1
+httpx==0.28.1

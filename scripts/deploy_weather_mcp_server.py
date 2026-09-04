@@ -39,6 +39,7 @@ def main(tag: str | None = None) -> None:
         env_vars=container_env,
         readiness_path="/health",
         min_replicas=1,
+        max_replicas=1,
     )
     mcp_url = url.rstrip("/") + "/mcp"
     save_env({"WEATHER_MCP_URL": mcp_url, "WEATHER_MCP_IMAGE": image})

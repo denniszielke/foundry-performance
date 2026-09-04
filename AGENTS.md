@@ -234,7 +234,7 @@ The agent still needs a real Foundry project + model for inference
   `APPLICATIONINSIGHTS_CONNECTION_STRING` is set for the component.
 - **Protocol rejected on `deploy_hosted_agent_responses` / `deploy_hosted_agent_invocations`**
   — trim `PROTOCOLS` in the relevant script to what the target Foundry region
-  supports (defaults to responses + a2a, and invocations + invocations_ws).
+  supports (defaults to responses + a2a, and invocations).
 
 ## Tear down
 
