@@ -29,8 +29,16 @@ Point at an arbitrary URL instead (e.g. a local process)::
 Phases
 ------
 * ``cold``     — the first request against the agent (pays process/tool startup).
-* ``warm``     — steady-state requests, each on a brand-new session.
-* ``followup`` — a second turn that reuses a primed session (conversation state).
+* ``warm``     — steady-state requests, each on a brand-new conversation.
+* ``followup`` — a second turn that reuses a primed conversation.
+
+Hosted session modes
+--------------------
+* ``dedicated`` — create one Foundry platform session per logical workload.
+* ``shared``    — route every workload in the run through one platform session.
+
+Foundry still provisions an isolated sandbox per platform session in both modes;
+these labels describe benchmark routing, not agent deployment modes.
 """
 
 from __future__ import annotations
@@ -121,9 +129,14 @@ def _resolve_base_url(agent: str, protocol: str) -> str:
     return f"{endpoint}/agents/{agent_id}/endpoint/protocols{suffix}"
 
 
-async def _timed(client, query: str, session_id: str | None) -> tuple[Timer, str]:
+async def _timed(
+    client,
+    query: str,
+    conversation_id: str | None,
+    agent_session_id: str | None,
+) -> tuple[Timer, str]:
     timer = Timer()
-    text = await client.call(timer, query, session_id)
+    text = await client.call(timer, query, conversation_id, agent_session_id)
     return timer, text
 
 
@@ -134,6 +147,7 @@ async def _bench_protocol(
     iterations: int,
     query: str,
     auth: httpx.Auth | None,
+    session_mode: str = "not-applicable",
     client_cls=None,
 ) -> list[Turn]:
     cls = client_cls or CLIENTS[name]
@@ -145,28 +159,47 @@ async def _bench_protocol(
     )
 
     async with make() as client:
+        shared_session = await client.create_session() if session_mode == "shared" else None
+
+        async def workload_session() -> str | None:
+            if session_mode == "shared":
+                return shared_session
+            if session_mode == "dedicated":
+                return await client.create_session()
+            return None
+
         # cold — first request against the agent.
-        turns.append(await _run_one(client, name, "cold", query, str(uuid.uuid4())))
+        turns.append(await _run_one(client, name, "cold", query, str(uuid.uuid4()), await workload_session()))
 
-        # warm — fresh session each iteration.
+        # warm — fresh conversation each iteration; sandbox routing follows session_mode.
         for _ in range(iterations):
-            turns.append(await _run_one(client, name, "warm", query, str(uuid.uuid4())))
+            turns.append(await _run_one(client, name, "warm", query, str(uuid.uuid4()), await workload_session()))
 
-        # followup — prime a session, then measure the second turn.
+        # followup — prime a conversation, then measure its second turn.
         for _ in range(iterations):
-            session = str(uuid.uuid4())
+            conversation_id = str(uuid.uuid4())
+            agent_session_id = await workload_session()
             try:
-                await _timed(client, query, session)  # prime (discarded)
+                await _timed(client, query, conversation_id, agent_session_id)  # prime (discarded)
             except Exception:  # noqa: BLE001 - if priming fails the followup will record the error
                 pass
-            turns.append(await _run_one(client, name, "followup", FOLLOWUP_QUERY, session))
+            turns.append(
+                await _run_one(client, name, "followup", FOLLOWUP_QUERY, conversation_id, agent_session_id)
+            )
 
     return turns
 
 
-async def _run_one(client, protocol: str, phase: str, query: str, session_id: str | None) -> Turn:
+async def _run_one(
+    client,
+    protocol: str,
+    phase: str,
+    query: str,
+    conversation_id: str | None,
+    agent_session_id: str | None,
+) -> Turn:
     try:
-        timer, text = await _timed(client, query, session_id)
+        timer, text = await _timed(client, query, conversation_id, agent_session_id)
         return Turn(
             protocol=protocol,
             phase=phase,
@@ -188,13 +221,14 @@ async def run(
     *,
     agent: str | None = None,
     base_url: str | None = None,
+    session_mode: str = "not-applicable",
 ) -> list[Turn]:
     turns: list[Turn] = []
     for name in protocols:
         url = base_url if base_url is not None else _resolve_base_url(agent, name)  # type: ignore[arg-type]
         print(f"→ benchmarking {name} ({url}) ...", flush=True)
         client_cls = AGENT_PROTOCOL_CLIENTS.get(agent or "", {}).get(name)
-        turns.extend(await _bench_protocol(name, url, model, iterations, query, auth, client_cls))
+        turns.extend(await _bench_protocol(name, url, model, iterations, query, auth, session_mode, client_cls))
     return turns
 
 
@@ -238,6 +272,15 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Weather tool route recorded in the result. Defaults to the deployed agent's saved mode, then direct.",
     )
+    parser.add_argument(
+        "--session-mode",
+        choices=["dedicated", "shared"],
+        default=None,
+        help=(
+            "Hosted-agent sandbox routing: dedicated creates one platform session per workload; "
+            "shared reuses one platform session for the run. Only valid with --agent hosted-* ."
+        ),
+    )
     parser.add_argument("--query", default=DEFAULT_QUERY, help="Question to ask each turn.")
     parser.add_argument(
         "--out",
@@ -271,6 +314,7 @@ def _result_payload(
     model_hosting: str,
     model_deployment: str,
     tool_mode: str,
+    session_mode: str,
     iterations: int,
     query: str,
     base_url: str | None,
@@ -286,6 +330,7 @@ def _result_payload(
             "model-hosting": model_hosting,
             "model-deployment": model_deployment,
             "tool-mode": tool_mode,
+            "session-mode": session_mode,
             "n": stat.count,
             "err": stat.errors,
             "mean-ms": _milliseconds(stat.mean_s),
@@ -301,6 +346,7 @@ def _result_payload(
         "model-hosting": model_hosting,
         "model-deployment": model_deployment,
         "tool-mode": tool_mode,
+        "session-mode": session_mode,
         "iterations": iterations,
         "query": query,
         "base-url": base_url,
@@ -325,6 +371,10 @@ def main() -> None:
     model = args.model or os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "weather-agent")
 
     cfg = AGENTS[args.agent] if args.agent else None
+    is_hosted_agent = bool(args.agent and args.agent.startswith("hosted-"))
+    if args.session_mode and not is_hosted_agent:
+        raise SystemExit("--session-mode is only supported with --agent hosted-*.")
+    session_mode = args.session_mode or ("dedicated" if is_hosted_agent else "not-applicable")
     tool_mode = args.tool_mode or (
         os.environ.get(cfg["tool_mode_env"], os.environ.get("WEATHER_TOOL_MODE", "direct"))
         if cfg
@@ -355,7 +405,16 @@ def main() -> None:
 
     recorded_at = datetime.now(timezone.utc)
     turns = asyncio.run(
-        run(protocols, model, args.iterations, args.query, auth, agent=args.agent, base_url=args.base_url)
+        run(
+            protocols,
+            model,
+            args.iterations,
+            args.query,
+            auth,
+            agent=args.agent,
+            base_url=args.base_url,
+            session_mode=session_mode,
+        )
     )
     stats = summarize(turns)
 
@@ -378,6 +437,7 @@ def main() -> None:
         model_hosting=args.model_hosting,
         model_deployment=model,
         tool_mode=tool_mode,
+        session_mode=session_mode,
         iterations=args.iterations,
         query=args.query,
         base_url=args.base_url,

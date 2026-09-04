@@ -24,13 +24,24 @@ Phases answer the questions from the scenario:
 
 - **cold** — the first request against a freshly started agent (pays process +
   MCP tool startup — i.e. "start up time for new agents").
-- **warm** — steady-state requests, each on a brand-new session ("first request").
-- **followup** — a second turn that reuses a primed session ("follow up request
-  on existing sessions").
+- **warm** — steady-state requests, each on a brand-new conversation.
+- **followup** — a second turn that reuses a primed conversation.
 
 For `responses-store`, reuse means API-managed chaining: the priming response
 is stored and its ID is sent as `previous_response_id` on the measured turn.
-The regular `responses` client instead reuses `agent_session_id`.
+Platform session routing is an independent dimension for hosted agents:
+
+- `--session-mode dedicated` creates one Foundry session per cold, warm, or
+  follow-up workload.
+- `--session-mode shared` creates one Foundry session and routes every workload
+  in the run through it.
+
+Foundry isolates every session in its own sandbox. These mode names describe
+whether benchmark workloads get separate sessions or share one; they are not
+hosted-agent deployment settings. Session creation happens outside the timed
+interval. Responses sends `agent_session_id` in the request body, while
+Invocations sends it in the query string. Conversation IDs remain fresh for
+warm samples and are reused only for follow-ups.
 
 ## Usage
 
@@ -49,11 +60,12 @@ python -m src.clients.run_benchmark \
   --iterations 20 \
   --out results.json
 
-# Compare the two Responses API state configurations on a Foundry agent
+# Compare hosted workloads with isolated versus reused platform sessions
 python -m src.clients.run_benchmark \
   --agent hosted-responses \
-  --protocols responses,responses-store \
+  --protocols responses \
   --model-hosting foundry \
+  --session-mode shared \
   --iterations 20
 ```
 
@@ -61,8 +73,9 @@ python -m src.clients.run_benchmark \
 tool route saved by its deploy script; use `--tool-mode {direct,toolbox}` to
 label a manual `--base-url` run. Every run writes a timestamped
 JSON artifact under `results/` unless `--out` overrides the path. Its `results`
-array provides comparison-ready rows by protocol, phase, and `tool-mode`, while `turns`
-retains the raw measurements and errors.
+array provides comparison-ready rows by protocol, phase, `tool-mode`, and
+`session-mode`, while `turns` retains the raw measurements and errors. Hosted
+runs default to `dedicated`; other agent types record `not-applicable`.
 
 Generate a self-contained interactive dashboard from every benchmark artifact:
 

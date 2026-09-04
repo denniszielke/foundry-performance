@@ -82,9 +82,29 @@ class _HttpClient:
     def _foundry_params(self) -> dict[str, str]:
         """Extra query params Foundry's agent endpoint requires (not needed by the
         anonymous custom Container Apps)."""
-        return {"api-version": "v1"} if self._auth is not None else {}
+        is_foundry_endpoint = "/agents/" in self.base_url and "/endpoint/protocols" in self.base_url
+        return {"api-version": "v1"} if self._auth is not None or is_foundry_endpoint else {}
 
-    async def call(self, timer: Timer, query: str, session_id: str | None = None) -> str:
+    async def create_session(self) -> str:
+        endpoint = self.base_url.split("/protocols", 1)[0]
+        response = await self.http.post(
+            f"{endpoint}/sessions",
+            json={},
+            params=self._foundry_params() or None,
+        )
+        response.raise_for_status()
+        session_id = response.json().get("agent_session_id")
+        if not isinstance(session_id, str) or not session_id:
+            raise RuntimeError("Foundry session creation completed without an agent_session_id")
+        return session_id
+
+    async def call(
+        self,
+        timer: Timer,
+        query: str,
+        conversation_id: str | None = None,
+        agent_session_id: str | None = None,
+    ) -> str:
         raise NotImplementedError
 
 
@@ -100,14 +120,20 @@ class ResponsesClient(_HttpClient):
         self.model = model
         self._previous_response_ids: dict[str, str] = {}
 
-    async def call(self, timer: Timer, query: str, session_id: str | None = None) -> str:
+    async def call(
+        self,
+        timer: Timer,
+        query: str,
+        conversation_id: str | None = None,
+        agent_session_id: str | None = None,
+    ) -> str:
         params = self._foundry_params()
-        if session_id and not self.store_responses:
-            params["agent_session_id"] = session_id
         body = {"model": self.model, "input": query, "stream": True}
+        if agent_session_id:
+            body["agent_session_id"] = agent_session_id
         if self.store_responses:
             body["store"] = True
-            if session_id and (previous_response_id := self._previous_response_ids.get(session_id)):
+            if conversation_id and (previous_response_id := self._previous_response_ids.get(conversation_id)):
                 body["previous_response_id"] = previous_response_id
         chunks: list[str] = []
         response_id: str | None = None
@@ -136,10 +162,10 @@ class ResponsesClient(_HttpClient):
         text = "".join(chunks)
         if not text:
             raise RuntimeError("Responses API completed without assistant text")
-        if self.store_responses and session_id:
+        if self.store_responses and conversation_id:
             if response_id is None:
                 raise RuntimeError("Stored Responses API call completed without a response ID")
-            self._previous_response_ids[session_id] = response_id
+            self._previous_response_ids[conversation_id] = response_id
         return text
 
 
@@ -155,10 +181,16 @@ class InvocationsClient(_HttpClient):
 
     name = "invocations"
 
-    async def call(self, timer: Timer, query: str, session_id: str | None = None) -> str:
+    async def call(
+        self,
+        timer: Timer,
+        query: str,
+        conversation_id: str | None = None,
+        agent_session_id: str | None = None,
+    ) -> str:
         params = self._foundry_params()
-        if session_id:
-            params["agent_session_id"] = session_id
+        if agent_session_id:
+            params["agent_session_id"] = agent_session_id
         response = await self.http.post(
             f"{self.base_url}/invocations", json={"message": query}, params=params or None
         )
@@ -176,9 +208,17 @@ class AgUiInvocationsClient(_HttpClient):
         super().__init__(base_url, auth=auth)
         self._histories: dict[str, list[dict[str, str]]] = {}
 
-    async def call(self, timer: Timer, query: str, session_id: str | None = None) -> str:
+    async def call(
+        self,
+        timer: Timer,
+        query: str,
+        conversation_id: str | None = None,
+        agent_session_id: str | None = None,
+    ) -> str:
         params = self._foundry_params()
-        thread_id = session_id or uuid.uuid4().hex
+        if agent_session_id:
+            params["agent_session_id"] = agent_session_id
+        thread_id = conversation_id or uuid.uuid4().hex
         history = self._histories.setdefault(thread_id, [])
         history.append({"id": uuid.uuid4().hex, "role": "user", "content": query})
         body = {
@@ -230,14 +270,20 @@ class InvocationsWsClient(_HttpClient):
         query = f"?{urlencode(params)}" if params else ""
         return f"{scheme}://{host}/invocations_ws{query}"
 
-    async def call(self, timer: Timer, query: str, session_id: str | None = None) -> str:
+    async def call(
+        self,
+        timer: Timer,
+        query: str,
+        conversation_id: str | None = None,
+        agent_session_id: str | None = None,
+    ) -> str:
         import websockets
 
         from src.clients.auth import EntraTokenAuth
 
         headers = self._auth.header() if isinstance(self._auth, EntraTokenAuth) else None
         chunks: list[str] = []
-        async with websockets.connect(self._ws_url(session_id), additional_headers=headers) as ws:
+        async with websockets.connect(self._ws_url(agent_session_id), additional_headers=headers) as ws:
             await ws.send(json.dumps({"type": "message", "text": query}))
             async for raw in ws:
                 evt = json.loads(raw)
@@ -258,15 +304,21 @@ class A2aClient(_HttpClient):
     name = "a2a"
     endpoint_path = "/a2a"
 
-    async def call(self, timer: Timer, query: str, session_id: str | None = None) -> str:
+    async def call(
+        self,
+        timer: Timer,
+        query: str,
+        conversation_id: str | None = None,
+        agent_session_id: str | None = None,
+    ) -> str:
         message: dict[str, Any] = {
             "role": "user",
             "parts": [{"kind": "text", "type": "text", "text": query}],
             "messageId": uuid.uuid4().hex,
             "kind": "message",
         }
-        if session_id:
-            message["contextId"] = session_id
+        if conversation_id:
+            message["contextId"] = conversation_id
         rpc = {
             "jsonrpc": "2.0",
             "id": uuid.uuid4().hex,

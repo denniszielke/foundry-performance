@@ -25,6 +25,9 @@ KNOWN = {
     "prompt": {"protocols": ("responses", "a2a", "invocations"), "default_auth": "entra"},
     "custom-maf": {"protocols": ("responses", "a2a", "invocations", "invocations_ws"), "default_auth": "none"},
 }
+HOSTED_KNOWN = {
+    "hosted-responses": {"protocols": ("responses",), "default_auth": "entra"},
+}
 
 
 class ResolveAgentsTests(unittest.TestCase):
@@ -40,6 +43,14 @@ class ResolveAgentsTests(unittest.TestCase):
 
 
 class BuildMatrixTests(unittest.TestCase):
+    def test_hosted_agents_expand_to_dedicated_and_shared_runs(self) -> None:
+        matrix = build_matrix(["hosted-responses"], "all", HOSTED_KNOWN)
+        self.assertEqual([item.session_mode for item in matrix], ["dedicated", "shared"])
+        self.assertEqual(
+            [item.result_file for item in matrix],
+            ["benchmark-hosted-responses-dedicated.json", "benchmark-hosted-responses-shared.json"],
+        )
+
     def test_all_protocols_uses_what_each_agent_supports(self) -> None:
         matrix = build_matrix(["prompt", "custom-maf"], "all", KNOWN)
         self.assertEqual([item.agent for item in matrix], ["prompt", "custom-maf"])
@@ -60,6 +71,21 @@ class BuildMatrixTests(unittest.TestCase):
 
 
 class CommandTests(unittest.TestCase):
+    def test_hosted_command_carries_session_mode(self) -> None:
+        command = benchmark_command(
+            BatchRun(
+                agent="hosted-responses",
+                protocols=("responses",),
+                result_file="benchmark-hosted-responses-shared.json",
+                session_mode="shared",
+            ),
+            model_hosting="foundry",
+            iterations=10,
+            query="weather?",
+            auth="auto",
+        )
+        self.assertIn("--session-mode shared", command)
+
     @patch("scripts.run_benchmark_sandbox.time.sleep")
     def test_detached_benchmark_polls_and_returns_log(self, _sleep) -> None:
         class Sandbox:

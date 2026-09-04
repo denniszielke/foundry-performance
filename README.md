@@ -260,19 +260,25 @@ to whatever that variation supports — see the table above).
 `responses-store` is a second configuration of the Responses API for the
 Foundry-managed prompt and hosted-responses agents. It explicitly sends
 `store=true`, captures the returned response ID, and sends it as
-`previous_response_id` on the follow-up turn. The regular `responses`
-configuration continues to reuse `agent_session_id`, so running both labels
-compares API-managed response chaining with agent-session state.
+`previous_response_id` on the follow-up turn. Conversation continuity is kept
+separate from hosted sandbox routing.
+
+Hosted runs support `--session-mode dedicated|shared`. `dedicated` creates a
+real Foundry session for each logical workload; `shared` creates one session
+and reuses it across the run. Foundry still provisions an isolated sandbox per
+session in both cases: these names describe benchmark routing, not deployment
+modes. Session creation is excluded from measured latency.
 
 ```bash
 # 1. prompt agent — Foundry-native, responses + a2a + invocations
 python -m src.clients.run_benchmark --agent prompt --protocols a2a,responses --model-hosting foundry --iterations 5
 
-# Compare agent-session state with stored Responses API chaining
+# Compare API-managed response chaining
 python -m src.clients.run_benchmark --agent prompt --protocols responses,responses-store --model-hosting foundry --iterations 5
 
 # 2. hosted agent, responses variation — responses + a2a (fronted natively by Foundry)
 python -m src.clients.run_benchmark --agent hosted-responses --protocols a2a,responses --model-hosting foundry --iterations 5
+python -m src.clients.run_benchmark --agent hosted-responses --protocols responses --model-hosting foundry --session-mode shared --iterations 5
 python -m src.clients.run_benchmark --agent hosted-responses --protocols a2a,responses --model-hosting openai --iterations 5
 
 # 3. hosted agent, invocations variation — invocations
@@ -297,7 +303,8 @@ of your workstation, so latency is measured from inside Azure — and, in privat
 mode, from inside the VNet. One invocation is a batch: it boots the sandbox,
 downloads this repository into it, installs `src/clients/requirements.txt`,
 runs one `run_benchmark` per agent/protocol combination, and downloads every
-result file afterwards.
+result file afterwards. Hosted agents automatically run in both `dedicated`
+and `shared` session modes.
 
 ```bash
 # every deployed variation, all protocols each, 20 iterations
@@ -313,8 +320,9 @@ python -m scripts.run_benchmark_sandbox \
 
 Required flags mirror the local runner: `--agents`, `--protocols`,
 `--model-hosting`, `--iterations`. Results land in
-`results/sandbox-<UTC timestamp>/` (one `benchmark-<agent>.json` per run, plus
-`batch-summary.json` with the exit code of every run).
+`results/sandbox-<UTC timestamp>/` (`benchmark-<hosted-agent>-<session-mode>.json`
+for hosted runs, plus `batch-summary.json` with every exit code and `report.html`
+generated from all benchmark files in the batch).
 
 Networking follows `--network`:
 

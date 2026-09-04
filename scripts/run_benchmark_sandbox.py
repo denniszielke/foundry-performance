@@ -98,6 +98,7 @@ class BatchRun:
     agent: str
     protocols: tuple[str, ...]
     result_file: str
+    session_mode: str = "not-applicable"
     exit_code: int | None = None
     stdout: str = ""
     stderr: str = ""
@@ -146,7 +147,17 @@ def build_matrix(agents: list[str], protocols: str, known: dict[str, dict]) -> l
         if not selected:
             print(f"  ↳ skipping '{agent}': supports {list(supported)}, none requested")
             continue
-        matrix.append(BatchRun(agent=agent, protocols=selected, result_file=f"benchmark-{agent}.json"))
+        session_modes = ("dedicated", "shared") if agent.startswith("hosted-") else ("not-applicable",)
+        for session_mode in session_modes:
+            suffix = f"-{session_mode}" if session_mode != "not-applicable" else ""
+            matrix.append(
+                BatchRun(
+                    agent=agent,
+                    protocols=selected,
+                    result_file=f"benchmark-{agent}{suffix}.json",
+                    session_mode=session_mode,
+                )
+            )
     if not matrix:
         raise SystemExit("No agent/protocol combination left to benchmark.")
     return matrix
@@ -167,6 +178,8 @@ def benchmark_command(run_item: BatchRun, *, model_hosting: str, iterations: int
         "--auth", auth,
         "--out", f"{SANDBOX_RESULTS_DIR}/{run_item.result_file}",
     ]
+    if run_item.session_mode != "not-applicable":
+        args.extend(["--session-mode", run_item.session_mode])
     return " ".join(shlex.quote(arg) for arg in args)
 
 
@@ -430,6 +443,7 @@ def write_summary(matrix: list[BatchRun], destination: Path, metadata: dict[str,
         "runs": [
             {
                 "agent": item.agent,
+                "session-mode": item.session_mode,
                 "protocols": list(item.protocols),
                 "exit-code": item.exit_code,
                 "result-file": item.downloaded,
@@ -590,6 +604,7 @@ def main() -> int:
         )
 
         for item in matrix:
+            label = item.agent if item.session_mode == "not-applicable" else f"{item.agent}-{item.session_mode}"
             command = benchmark_command(
                 item,
                 model_hosting=args.model_hosting,
@@ -600,11 +615,11 @@ def main() -> int:
                 # need a credential the sandbox does not have.
                 auth="none" if token_rules else "auto",
             )
-            print(f"\n→ {item.agent} [{', '.join(item.protocols)}]")
+            print(f"\n→ {label} [{', '.join(item.protocols)}]")
             result = run_benchmark_detached(
                 sandbox,
                 command,
-                label=item.agent,
+                label=label,
                 timeout=args.exec_timeout,
             )
             item.exit_code = result.exit_code
