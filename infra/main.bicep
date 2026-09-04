@@ -84,6 +84,9 @@ var aiProjectDependentResources = json(aiProjectDependentResourcesJson)
 @description('Enable hosted agent deployment')
 param enableHostedAgents bool
 
+@description('Deploy the Foundry agent service and its dependencies into a private virtual network (network injection + private endpoints). The benchmark can then only be run from inside the VNet, e.g. from the ACA sandbox created by scripts.run_benchmark_sandbox.')
+param enablePrivateNetworking bool
+
 @description('Enable monitoring for the AI project')
 param enableMonitoring bool = true
 
@@ -112,6 +115,15 @@ var dependentResources = (enableHostedAgents) && !hasAcr ? union(aiProjectDepend
   }
 ]) : aiProjectDependentResources
 
+module vnet 'core/host/vnet.bicep' = {
+  scope: rg
+  name: 'vnet'
+  params: {
+    location: location
+    enablePrivateNetworking: enablePrivateNetworking
+  }
+}
+
 module aiProject 'core/ai/ai-project.bicep' = {
   scope: rg
   name: 'ai-project'
@@ -129,14 +141,10 @@ module aiProject 'core/ai/ai-project.bicep' = {
     enableHostedAgents: enableHostedAgents
     skipConnectionCreation: skipConnectionCreation
     skipRoleAssignments: skipRoleAssignments
-  }
-}
-
-module vnet 'core/host/vnet.bicep' = {
-  scope: rg
-  name: 'vnet'
-  params: {
-    location: location
+    enablePrivateNetworking: enablePrivateNetworking
+    agentSubnetId: vnet.outputs.agentSubnetId
+    privateEndpointSubnetId: vnet.outputs.privateEndpointSubnetId
+    vnetId: vnet.outputs.vnetId
   }
 }
 
@@ -179,6 +187,13 @@ output AZURE_CONTAINER_REGISTRY_NAME string = aiProject.outputs.dependentResourc
 output AZURE_STORAGE_ACCOUNT_NAME string = aiProject.outputs.dependentResources.storage.accountName
 output AZURE_CONTAINER_ENVIRONMENT_NAME string = containerAppsEnv.outputs.name
 output AZURE_MANAGED_IDENTITY_NAME string = identity.outputs.identityName
+
+// Networking (private Foundry deployment + the ACA sandbox benchmark runner)
+output AZURE_PRIVATE_NETWORKING bool = enablePrivateNetworking
+output AZURE_VNET_NAME string = vnet.outputs.vnetName
+output AZURE_VNET_ID string = vnet.outputs.vnetId
+output AZURE_AGENT_SUBNET_ID string = vnet.outputs.agentSubnetId
+output AZURE_SANDBOX_SUBNET_ID string = vnet.outputs.sandboxSubnetId
 
 output AZURE_RESOURCE_GROUP string = resourceGroupName
 output AZURE_LOCATION string = location

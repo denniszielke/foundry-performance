@@ -26,6 +26,11 @@ a2a-sdk>=0.3.0
 httpx==0.28.1
 websockets==16.1.1
 
+# --- Sandbox benchmark runner (scripts/run_benchmark_sandbox.py) -----------
+# Azure Container Apps sandboxes (preview) used to run the benchmark batch
+# from inside the deployment's virtual network.
+azure-containerapps-sandbox==0.1.0b4
+
 # --- Deployment scripts (scripts/, Foundry management plane) ---------------
 # azure-ai-projects is capped at <2.4.0 by agent-framework-foundry 1.10.3.
 azure-ai-projects==2.3.0

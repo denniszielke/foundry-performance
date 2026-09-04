@@ -34,6 +34,18 @@ param enableMonitoring bool = true
 @description('Enable hosted agent deployment')
 param enableHostedAgents bool = false
 
+@description('Deploy the Foundry account into the virtual network (network injection + private endpoints)')
+param enablePrivateNetworking bool = false
+
+@description('Resource id of the delegated agent subnet used for network injection')
+param agentSubnetId string = ''
+
+@description('Resource id of the subnet hosting the private endpoints')
+param privateEndpointSubnetId string = ''
+
+@description('Resource id of the virtual network the private DNS zones are linked to')
+param vnetId string = ''
+
 @description('Set to true to skip creating connections that already exist (for idempotent re-runs)')
 param skipConnectionCreation bool = false
 
@@ -82,15 +94,26 @@ resource aiAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
   identity: {
     type: 'SystemAssigned'
   }
+  #disable-next-line BCP037
   properties: {
     allowProjectManagement: true
     customSubDomainName: !empty(existingAiAccountName) ? existingAiAccountName : 'ai-account-${resourceToken}'
     networkAcls: {
-      defaultAction: 'Allow'
+      defaultAction: enablePrivateNetworking ? 'Deny' : 'Allow'
       virtualNetworkRules: []
       ipRules: []
+      bypass: 'AzureServices'
     }
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: enablePrivateNetworking ? 'Disabled' : 'Enabled'
+    // Injects the agent service into the delegated agent subnet so agent
+    // traffic never leaves the virtual network.
+    networkInjections: enablePrivateNetworking ? [
+      {
+        scenario: 'agent'
+        subnetArmId: agentSubnetId
+        useMicrosoftManagedNetwork: false
+      }
+    ] : null
     disableLocalAuth: true
   }
 
@@ -122,9 +145,11 @@ resource aiAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
 
   resource aiFoundryAccountCapabilityHost 'capabilityHosts@2025-10-01-preview' = if (enableHostedAgents) {
     name: 'agents'
+    #disable-next-line BCP037
     properties: {
       capabilityHostKind: 'Agents'
-      enablePublicHostingEnvironment: true
+      enablePublicHostingEnvironment: !enablePrivateNetworking
+      customerSubnet: enablePrivateNetworking ? agentSubnetId : null
     }
   }
 }
@@ -222,6 +247,18 @@ module acr '../host/acr.bicep' = if (hasAcrConnection) {
     aiProjectName: aiAccount::project.name
     skipConnectionCreation: skipConnectionCreation
     skipRoleAssignments: skipRoleAssignments
+  }
+}
+
+module privateEndpoints '../network/private-endpoints.bicep' = if (enablePrivateNetworking) {
+  name: 'private-endpoints'
+  params: {
+    location: location
+    tags: tags
+    vnetId: vnetId
+    privateEndpointSubnetId: privateEndpointSubnetId
+    aiAccountName: aiAccount.name
+    storageAccountName: hasStorageConnection ? storage!.outputs.storageAccountName : ''
   }
 }
 

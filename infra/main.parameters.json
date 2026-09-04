@@ -17,6 +17,9 @@
     "principalType": {
       "value": "${AZURE_PRINCIPAL_TYPE=User}"
     },
+    "enablePrivateNetworking": {
+      "value": "${ENABLE_PRIVATE_NETWORKING}"
+    },
     "enableHostedAgents": {
       "value": "${ENABLE_HOSTED_AGENTS=true}"
     },

@@ -103,7 +103,9 @@ src/
   custom_agent_harness/   interactive plan-and-execute console (direct MCP)
   clients/                benchmark clients (one per protocol) + run_benchmark.py
 scripts/                build / deploy / register / cleanup scripts
+                        run_benchmark_sandbox.py runs benchmark batches in an ACA sandbox
 infra/                  bicep: Foundry + ACR + Container Apps + monitoring
+                        core/network/  private endpoints + private DNS (private mode)
 ```
 
 ## Prerequisites
@@ -122,6 +124,12 @@ infra/                  bicep: Foundry + ACR + Container Apps + monitoring
    ```bash
    azd up
    ```
+
+   `azd up` asks for the environment name, region, subscription, and
+   **`enablePrivateNetworking`** — set it to `true` to deploy the Foundry agent
+   service into the private virtual network (see
+   [Private networking](#private-networking)). Pre-answer it non-interactively
+   with `azd env set ENABLE_PRIVATE_NETWORKING false`.
 
    Outputs are written to `.env` (the `azure.yaml` postdeploy hook copies them
    to the repo root). See `.env.sample` for every variable.
@@ -175,6 +183,33 @@ infra/                  bicep: Foundry + ACR + Container Apps + monitoring
 
 See [AGENTS.md](AGENTS.md) for the full operational runbook (rebuild, redeploy,
 update, troubleshoot, tear down).
+
+## Private networking
+
+`enablePrivateNetworking=true` (asked during `azd up`, stored as
+`ENABLE_PRIVATE_NETWORKING`) provisions the same benchmark, but with the
+Foundry agent service network injected — modelled on the Foundry
+[17-private-network-standard-user-assigned-identity-agent-setup](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/17-private-network-standard-user-assigned-identity-agent-setup)
+sample:
+
+| what | public (default) | private |
+|------|------------------|---------|
+| AI Services account | `publicNetworkAccess: Enabled` | `Disabled`, `networkAcls.defaultAction: Deny` (bypass `AzureServices`) |
+| agent runtime | Microsoft-managed network | injected into `agent-subnet` (`networkInjections`, `scenario: agent`) |
+| account capability host | public hosting environment | `customerSubnet` = `agent-subnet` |
+| reachability | any client with a token | private endpoint + private DNS only |
+
+The VNet (`10.0.0.0/19`) always carries four subnets so the two modes stay
+comparable: `gateway`, `pe-subnet` (private endpoints), `agent-subnet`
+(delegated to Foundry only in private mode), `sandbox-subnet` (ACA sandbox) and
+`aca-apps` (Container Apps environment). Private mode additionally creates
+private endpoints and private DNS zones
+(`privatelink.services.ai.azure.com`, `privatelink.openai.azure.com`,
+`privatelink.cognitiveservices.azure.com`, `privatelink.blob.core.windows.net`).
+
+Once private, the Foundry endpoint is unreachable from your workstation. Run
+the deploy scripts before flipping the switch, and benchmark from the sandbox
+(below), which joins `sandbox-subnet`.
 
 ## Hosted hypothesis workflow
 
@@ -253,6 +288,50 @@ python -m src.clients.run_benchmark --agent custom-langchain --protocols a2a,res
 python -m src.clients.run_benchmark --agent custom-langchain --protocols a2a,responses --model-hosting openai --iterations 5
 
 ```
+
+### Batch runs from an Azure Container Apps sandbox
+
+`scripts.run_benchmark_sandbox` runs the same benchmark from a disposable
+[ACA sandbox](https://sandboxes.azure.com/docs/sandboxes/sandbox/vnet) instead
+of your workstation, so latency is measured from inside Azure — and, in private
+mode, from inside the VNet. One invocation is a batch: it boots the sandbox,
+downloads this repository into it, installs `src/clients/requirements.txt`,
+runs one `run_benchmark` per agent/protocol combination, and downloads every
+result file afterwards.
+
+```bash
+# every deployed variation, all protocols each, 20 iterations
+python -m scripts.run_benchmark_sandbox \
+  --agents all --protocols all --model-hosting foundry --iterations 20
+
+# a subset, results in a named directory, sandbox kept for inspection
+python -m scripts.run_benchmark_sandbox \
+  --agents custom-maf,hosted-responses --protocols responses,a2a \
+  --model-hosting openai --iterations 10 \
+  --results-dir results/batch-01 --keep-sandbox
+```
+
+Required flags mirror the local runner: `--agents`, `--protocols`,
+`--model-hosting`, `--iterations`. Results land in
+`results/sandbox-<UTC timestamp>/` (one `benchmark-<agent>.json` per run, plus
+`batch-summary.json` with the exit code of every run).
+
+Networking follows `--network`:
+
+- `auto` (default) — VNet-joined when `AZURE_PRIVATE_NETWORKING=true`, public otherwise.
+- `private` — the sandbox group gets a VNet connection to `sandbox-subnet`, so
+  agents are reached over private endpoints. The Entra token for Foundry
+  endpoints is written to the sandbox `.env` (`AZURE_AI_ACCESS_TOKEN`) because
+  that traffic does not pass the egress proxy.
+- `public` — agents are reached through the ACA egress proxy. The proxy runs a
+  deny-by-default policy that whitelists only GitHub/PyPI (bootstrap) plus the
+  hosts of every agent, MCP and toolbox endpoint in `.env`; add more with
+  `--egress-allow host1,host2`. The Foundry `Authorization` header is injected
+  by the proxy, so no token is ever written into the sandbox.
+
+The injected token is not refreshed, so keep single batches under an hour.
+Sandboxes require the `Container Apps SandboxGroup Data Owner` role, which the
+script grants to the signed-in user if it is missing.
 
 ## Run the harness console
 
@@ -338,4 +417,12 @@ calls, and protocol handling are traceable end to end.
 ```bash
 python -m scripts.delete_agents   # remove Foundry agents + toolbox
 azd down                          # remove all Azure resources
+```
+
+Sandbox groups live outside the azd deployment; delete one when you are done
+benchmarking:
+
+```bash
+az resource delete --resource-group "$AZURE_RESOURCE_GROUP" \
+  --resource-type Microsoft.App/sandboxGroups --name "sbx-$AZURE_ENV_NAME"
 ```
