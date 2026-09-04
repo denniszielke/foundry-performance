@@ -26,7 +26,7 @@ ERROR_MARKERS = (
 )
 
 
-def _quality_summary(turns: list[dict[str, Any]]) -> dict[str, int]:
+def _quality_summary(turns: list[dict[str, Any]], results: list[dict[str, Any]]) -> dict[str, int]:
     suspicious = 0
     for turn in turns:
         if not turn.get("ok"):
@@ -34,7 +34,13 @@ def _quality_summary(turns: list[dict[str, Any]]) -> dict[str, int]:
         text = str(turn.get("text") or "").strip().lower()
         if not text or any(marker in text for marker in ERROR_MARKERS):
             suspicious += 1
-    return {"turns": len(turns), "suspicious": suspicious}
+    failed_turns = sum(1 for turn in turns if not turn.get("ok"))
+    aggregate_errors = sum(int(row.get("err") or 0) for row in results)
+    return {
+        "turns": len(turns),
+        "suspicious": suspicious,
+        "errors": max(failed_turns, aggregate_errors),
+    }
 
 
 def _load_run(path: Path) -> dict[str, Any]:
@@ -63,7 +69,7 @@ def _load_run(path: Path) -> dict[str, Any]:
         "iterations": data.get("iterations"),
         "query": data.get("query"),
         "base-url": data.get("base-url"),
-        "quality": _quality_summary(turns),
+        "quality": _quality_summary(turns, data["results"]),
         "results": data["results"],
     }
 
@@ -240,6 +246,11 @@ HTML_TEMPLATE = r'''<!doctype html>
       <label>Model deployment<select id="model-deployment"></select></label>
       <label>Tool mode<select id="tool-mode"></select></label>
       <label>Protocol<select id="protocol"></select></label>
+      <label>Run status<select id="run-status">
+        <option value="all">All runs</option>
+        <option value="clean">Error-free only</option>
+        <option value="errors">With errors only</option>
+      </select></label>
       <fieldset class="phase-filter"><legend>Include phases</legend><div class="phase-options">
         <label class="phase-option"><input type="checkbox" name="phase" value="cold" checked>Cold</label>
         <label class="phase-option"><input type="checkbox" name="phase" value="warm" checked>Warm</label>
@@ -286,10 +297,12 @@ HTML_TEMPLATE = r'''<!doctype html>
     const number = (value) => value === null || value === undefined || value === "" ? null : (Number.isFinite(Number(value)) ? Number(value) : null);
     const formatMs = (value) => number(value) === null ? "--" : `${number(value).toLocaleString(undefined, {maximumFractionDigits: 1})} ms`;
     const formatRate = (value) => `${(value * 100).toFixed(value ? 1 : 0)}%`;
-    const qualityFor = (turns) => {
+    const qualityFor = (turns, results) => {
       const markers = ["service failed", "api version not supported", "error code:", "traceback", "internal server error"];
       const suspicious = turns.filter((turn) => turn.ok && (!String(turn.text || "").trim() || markers.some((marker) => String(turn.text || "").toLowerCase().includes(marker)))).length;
-      return {turns: turns.length, suspicious};
+      const failedTurns = turns.filter((turn) => !turn.ok).length;
+      const aggregateErrors = results.reduce((sum, row) => sum + (number(row.err) || 0), 0);
+      return {turns: turns.length, suspicious, errors: Math.max(failedTurns, aggregateErrors)};
     };
     function normalizeRun(data, source) {
       const required = ["datetime", "agent-type", "model-hosting", "model-deployment", "results"];
@@ -297,14 +310,18 @@ HTML_TEMPLATE = r'''<!doctype html>
       if (missing.length || !Array.isArray(data.results)) throw new Error(`${source}: invalid benchmark data${missing.length ? `; missing ${missing.join(", ")}` : ""}`);
       return {source, datetime: data.datetime, "agent-type": data["agent-type"], "model-hosting": data["model-hosting"],
         "model-deployment": data["model-deployment"], "tool-mode": data["tool-mode"] || "unknown", iterations: data.iterations, query: data.query, "base-url": data["base-url"],
-        quality: qualityFor(Array.isArray(data.turns) ? data.turns : []), results: data.results};
+        quality: qualityFor(Array.isArray(data.turns) ? data.turns : [], data.results), results: data.results};
     }
     function rows() {
       return state.runs.flatMap((run) => run.results.map((row) => ({...row, "tool-mode": row["tool-mode"] || run["tool-mode"] || "unknown", source: run.source, datetime: run.datetime, quality: run.quality})));
     }
     function filteredRows() {
       const phases = new Set([...document.querySelectorAll('input[name="phase"]:checked')].map((input) => input.value));
-      return rows().filter((row) => phases.has(String(row.phase)) && filterIds.every((id) => byId(id).value === "all" || String(row[id]) === byId(id).value));
+      const runStatus = byId("run-status").value;
+      return rows().filter((row) => {
+        const statusMatches = runStatus === "all" || (runStatus === "clean" ? !row.quality.errors : Boolean(row.quality.errors));
+        return statusMatches && phases.has(String(row.phase)) && filterIds.every((id) => byId(id).value === "all" || String(row[id]) === byId(id).value);
+      });
     }
     function fillFilters() {
       const current = Object.fromEntries(filterIds.map((id) => [id, byId(id).value || "all"]));
@@ -382,9 +399,9 @@ HTML_TEMPLATE = r'''<!doctype html>
       fillFilters(); render();
       if (failures.length) console.error("Skipped benchmark files:", failures);
     }
-    filterIds.concat("metric").forEach((id) => byId(id).addEventListener("change", render));
+    filterIds.concat("metric", "run-status").forEach((id) => byId(id).addEventListener("change", render));
     document.querySelectorAll('input[name="phase"]').forEach((input) => input.addEventListener("change", render));
-    byId("reset").addEventListener("click", () => { filterIds.forEach((id) => byId(id).value = "all"); document.querySelectorAll('input[name="phase"]').forEach((input) => input.checked = true); byId("metric").value = "mean-ms"; render(); });
+    byId("reset").addEventListener("click", () => { filterIds.forEach((id) => byId(id).value = "all"); byId("run-status").value = "all"; document.querySelectorAll('input[name="phase"]').forEach((input) => input.checked = true); byId("metric").value = "mean-ms"; render(); });
     byId("file-input").addEventListener("change", (event) => addFiles([...event.target.files]));
     document.querySelectorAll("th[data-key]").forEach((heading) => heading.addEventListener("click", () => {
       state.sortDirection = state.sortKey === heading.dataset.key ? -state.sortDirection : 1; state.sortKey = heading.dataset.key; render();
