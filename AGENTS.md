@@ -158,6 +158,8 @@ agents afterward so they pick up the updated toolbox.
 
 ```bash
 python -m src.clients.run_benchmark --agent custom-maf --protocols all --model-hosting foundry
+python -m src.clients.run_benchmark --agent hosted-responses --protocols responses \
+  --model-hosting foundry --session-mode shared
 python -m src.clients.run_benchmark --base-url http://127.0.0.1:8088 \
   --protocols responses,invocations_ws --model-hosting foundry \
   --iterations 20 --out results.json
@@ -174,9 +176,11 @@ python -m scripts.run_benchmark_sandbox --agents custom-maf --protocols response
 
 Boots a sandbox in the `sbx-$AZURE_ENV_NAME` sandbox group, downloads the repo
 (`--repo-url`/`--repo-ref`, defaults to the `origin` remote at `HEAD`),
-installs `src/clients/requirements.txt`, runs one benchmark per
-agent/protocol combination and downloads all result files plus
-`batch-summary.json`. `--network auto` (default) joins the sandbox to
+installs `src/clients/requirements.txt`, runs both `dedicated` and `shared`
+session modes for each hosted agent (one run for other agent types), and
+downloads all result files plus `batch-summary.json`. It then generates
+`report.html` from every benchmark JSON in the batch. `--network auto`
+(default) joins the sandbox to
 `sandbox-subnet` when `AZURE_PRIVATE_NETWORKING=true`; `public` reaches the
 agents through the ACA egress proxy under a deny-by-default allowlist derived
 from `.env` (extend it with `--egress-allow`). The sandbox is deleted at the
