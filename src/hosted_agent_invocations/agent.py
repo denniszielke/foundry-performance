@@ -12,10 +12,10 @@ from azure.ai.agentserver.invocations import InvocationAgentServerHost
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from openai import AsyncAzureOpenAI, AsyncOpenAI
 from pydantic_ai import Agent
-from pydantic_ai.ag_ui import handle_ag_ui_request
-from pydantic_ai.mcp import MCPServerStreamableHTTP
+from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.ui.ag_ui import AGUIAdapter
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -123,7 +123,7 @@ if tool_mode == "toolbox":
         timeout=120.0,
     )
 logger.info("Weather tool mode=%s url=%s", tool_mode, tool_url)
-weather_tools = MCPServerStreamableHTTP(tool_url, include_instructions=True, **tool_kwargs)
+weather_tools = MCPToolset(tool_url, include_instructions=True, **tool_kwargs)
 agent = Agent(model, instructions=INSTRUCTIONS, toolsets=[weather_tools])
 
 app = InvocationAgentServerHost()
@@ -131,7 +131,7 @@ app = InvocationAgentServerHost()
 
 @app.invoke_handler
 async def handle_invoke(request: Request) -> Response:
-    return await handle_ag_ui_request(agent, request)
+    return await AGUIAdapter.dispatch_request(request, agent=agent)
 
 
 if __name__ == "__main__":

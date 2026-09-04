@@ -207,6 +207,7 @@ def deploy_container_app(
     memory: str = "2.0Gi",
     readiness_path: str = "",
     min_replicas: int = 0,
+    max_replicas: int = 2,
     external: bool = True,
 ) -> str:
     """Deploy the app.bicep Container App module and return its https URL."""
@@ -224,7 +225,7 @@ def deploy_container_app(
         f"containerMemory={memory}",
         f"readinessProbePath={readiness_path}",
         f"minReplicas={min_replicas}",
-        f"external={'true' if external else 'false'}",
+        f"maxReplicas={max_replicas}",
     ]
     uri = run(
         [

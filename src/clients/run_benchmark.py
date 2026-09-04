@@ -73,7 +73,7 @@ AGENTS: dict[str, dict] = {
     "hosted-invocations": {
         "id_env": "WEATHER_HOSTED_AGENT_INVOCATIONS_NAME",
         "tool_mode_env": "WEATHER_HOSTED_AGENT_INVOCATIONS_TOOL_MODE",
-        "protocols": ("invocations", "invocations_ws"),
+        "protocols": ("invocations",),
         "default_auth": "entra",
     },
     "custom-langchain": {

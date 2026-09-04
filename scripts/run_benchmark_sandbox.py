@@ -42,15 +42,18 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import urlparse
 
 from scripts._helpers import ROOT, env, load_env, run
+from scripts.generate_benchmark_dashboard import generate_dashboard
 
 # Data-plane role required to create sandboxes in a sandbox group.
 SANDBOX_DATA_OWNER_ROLE = "Container Apps SandboxGroup Data Owner"
 VNET_CONNECTION_NAME = "benchmark-vnet"
 SANDBOX_WORKDIR = "/work"
 SANDBOX_RESULTS_DIR = f"{SANDBOX_WORKDIR}/results"
+SANDBOX_SITE_PACKAGES = f"{SANDBOX_WORKDIR}/.python-packages"
 
 # Hosts the sandbox always needs: the repository tarball and PyPI.
 BOOTSTRAP_EGRESS_HOSTS = (
@@ -58,6 +61,7 @@ BOOTSTRAP_EGRESS_HOSTS = (
     "codeload.github.com",
     "objects.githubusercontent.com",
     "raw.githubusercontent.com",
+    "bootstrap.pypa.io",
     "pypi.org",
     "files.pythonhosted.org",
 )
@@ -151,7 +155,9 @@ def build_matrix(agents: list[str], protocols: str, known: dict[str, dict]) -> l
 def benchmark_command(run_item: BatchRun, *, model_hosting: str, iterations: int, query: str, auth: str) -> str:
     """The shell command that runs one benchmark inside the sandbox."""
     args = [
-        f"{SANDBOX_WORKDIR}/.venv/bin/python",
+        "env",
+        f"PYTHONPATH={SANDBOX_SITE_PACKAGES}",
+        "python3",
         "-m", "src.clients.run_benchmark",
         "--agent", run_item.agent,
         "--protocols", ",".join(run_item.protocols),
@@ -285,9 +291,16 @@ def wait_for_exec(sandbox, *, timeout: float = 120.0) -> None:
     raise RuntimeError("sandbox exec endpoint did not come up in time")
 
 
-def sandbox_exec(sandbox, command: str, *, label: str, check: bool = True):
+def sandbox_exec(
+    sandbox,
+    command: str,
+    *,
+    label: str,
+    check: bool = True,
+    working_directory: str = SANDBOX_WORKDIR,
+):
     print(f"  ↳ [{label}] {command[:160]}")
-    result = sandbox.exec(command, working_directory=SANDBOX_WORKDIR)
+    result = sandbox.exec(command, working_directory=working_directory)
     if check and result.exit_code != 0:
         raise RuntimeError(
             f"sandbox exec failed [{label}]: exit={result.exit_code}\n"
@@ -295,6 +308,43 @@ def sandbox_exec(sandbox, command: str, *, label: str, check: bool = True):
             f"  err: {(result.stderr or '')[:800]}"
         )
     return result
+
+
+def run_benchmark_detached(sandbox, command: str, *, label: str, timeout: float):
+    """Run a long benchmark without holding one data-plane HTTP request open."""
+    log_path = f"{SANDBOX_RESULTS_DIR}/.{label}.log"
+    exit_path = f"{SANDBOX_RESULTS_DIR}/.{label}.exit"
+    script = (
+        f"{command} > {shlex.quote(log_path)} 2>&1; "
+        f"code=$?; printf '%s' \"$code\" > {shlex.quote(exit_path)}"
+    )
+    launch = (
+        f"rm -f {shlex.quote(log_path)} {shlex.quote(exit_path)} && "
+        f"nohup sh -c {shlex.quote(script)} >/dev/null 2>&1 &"
+    )
+    sandbox_exec(sandbox, launch, label=f"{label}-start")
+
+    deadline = time.monotonic() + timeout
+    status_command = (
+        f"if test -f {shlex.quote(exit_path)}; then cat {shlex.quote(exit_path)}; "
+        "else printf RUNNING; fi"
+    )
+    while time.monotonic() < deadline:
+        try:
+            status = sandbox_exec(sandbox, status_command, label=f"{label}-status", check=False)
+            value = (status.stdout or "").strip()
+            if value != "RUNNING":
+                exit_code = int(value)
+                try:
+                    output = sandbox.read_file(log_path).decode("utf-8", errors="replace")
+                except Exception as error:  # noqa: BLE001 - preserve the process result when log retrieval fails
+                    output = f"Could not retrieve sandbox log: {error}"
+                return SimpleNamespace(exit_code=exit_code, stdout=output, stderr="" if exit_code == 0 else output)
+        except Exception as error:  # noqa: BLE001 - transient data-plane resets are safe while the process runs
+            print(f"  ↳ [{label}-status] transient polling error: {error}")
+        time.sleep(5)
+
+    raise RuntimeError(f"sandbox benchmark '{label}' did not finish within {timeout:g}s")
 
 
 # --------------------------------------------------------------------------- #
@@ -319,7 +369,12 @@ def default_repo_ref() -> str:
 
 def bootstrap_sandbox(sandbox, *, tarball_url: str, env_file: str) -> None:
     """Download the repo, install the benchmark client deps, write ``.env``."""
-    sandbox_exec(sandbox, f"mkdir -p {SANDBOX_WORKDIR} {SANDBOX_RESULTS_DIR}", label="mkdir")
+    sandbox_exec(
+        sandbox,
+        f"mkdir -p {SANDBOX_WORKDIR} {SANDBOX_RESULTS_DIR}",
+        label="mkdir",
+        working_directory="/",
+    )
     sandbox_exec(
         sandbox,
         "curl -fsSL " + shlex.quote(tarball_url) + " -o /tmp/repo.tar.gz && "
@@ -328,9 +383,9 @@ def bootstrap_sandbox(sandbox, *, tarball_url: str, env_file: str) -> None:
     )
     sandbox_exec(
         sandbox,
-        f"python3 -m venv {SANDBOX_WORKDIR}/.venv && "
-        f"{SANDBOX_WORKDIR}/.venv/bin/pip install --quiet --upgrade pip && "
-        f"{SANDBOX_WORKDIR}/.venv/bin/pip install --quiet -r {SANDBOX_WORKDIR}/src/clients/requirements.txt",
+        "curl -fsSL https://bootstrap.pypa.io/pip/pip.pyz -o /tmp/pip.pyz && "
+        f"python3 /tmp/pip.pyz install --quiet --target {SANDBOX_SITE_PACKAGES} "
+        f"-r {SANDBOX_WORKDIR}/src/clients/requirements.txt",
         label="install-deps",
     )
     sandbox.write_file(f"{SANDBOX_WORKDIR}/.env", env_file)
@@ -387,6 +442,13 @@ def write_summary(matrix: list[BatchRun], destination: Path, metadata: dict[str,
     return summary
 
 
+def write_report(destination: Path) -> Path:
+    """Generate an interactive report from every benchmark artifact in a batch."""
+    report = destination / "report.html"
+    generate_dashboard(destination, "benchmark-*.json", report)
+    return report
+
+
 # --------------------------------------------------------------------------- #
 # CLI
 # --------------------------------------------------------------------------- #
@@ -414,6 +476,12 @@ def parse_args(known_agents: list[str]) -> argparse.Namespace:
     parser.add_argument("--resource-group", default=None, help="Resource group (default: $AZURE_RESOURCE_GROUP).")
     parser.add_argument("--cpu", default="2000m", help="Sandbox CPU request, e.g. 2000m.")
     parser.add_argument("--memory", default="4096Mi", help="Sandbox memory request, e.g. 4096Mi.")
+    parser.add_argument(
+        "--exec-timeout",
+        type=int,
+        default=3600,
+        help="Seconds to wait for each sandbox shell command (default: 3600).",
+    )
     parser.add_argument("--repo-url", default=None, help="Repository to benchmark from (default: origin remote).")
     parser.add_argument("--repo-ref", default=None, help="Branch, tag or commit to download (default: HEAD).")
     parser.add_argument("--egress-allow", default="",
@@ -427,6 +495,8 @@ def main() -> int:
     from src.clients.run_benchmark import AGENTS
 
     args = parse_args(sorted(AGENTS))
+    if args.exec_timeout <= 0:
+        raise SystemExit("--exec-timeout must be greater than zero.")
     agents = resolve_agents(args.agents, AGENTS)
     matrix = build_matrix(agents, args.protocols, AGENTS)
 
@@ -482,6 +552,7 @@ def main() -> int:
         subscription_id=subscription,
         resource_group=settings.resource_group,
         sandbox_group=settings.sandbox_group,
+        read_timeout=args.exec_timeout,
     )
 
     # Foundry endpoints require an Entra token. Over the VNet the traffic
@@ -530,7 +601,12 @@ def main() -> int:
                 auth="none" if token_rules else "auto",
             )
             print(f"\n→ {item.agent} [{', '.join(item.protocols)}]")
-            result = sandbox_exec(sandbox, command, label=item.agent, check=False)
+            result = run_benchmark_detached(
+                sandbox,
+                command,
+                label=item.agent,
+                timeout=args.exec_timeout,
+            )
             item.exit_code = result.exit_code
             item.stdout = result.stdout or ""
             item.stderr = result.stderr or ""
@@ -539,22 +615,29 @@ def main() -> int:
                 exit_code = 1
                 print(f"  ↳ FAILED (exit={item.exit_code})\n{item.stderr[-2000:]}")
 
-        print("\n### Downloading results")
-        download_results(sandbox, matrix, results_dir)
-        summary = write_summary(
-            matrix,
-            results_dir,
-            {
-                "datetime": started_at.isoformat().replace("+00:00", "Z"),
-                "model-hosting": args.model_hosting,
-                "iterations": args.iterations,
-                "query": args.query,
-                "network": "vnet" if use_vnet else "public",
-                "sandbox-group": settings.sandbox_group,
-            },
-        )
-        print(f"  ↳ wrote {summary}")
     finally:
+        if sandbox is not None:
+            print("\n### Downloading results")
+            try:
+                download_results(sandbox, matrix, results_dir)
+                summary = write_summary(
+                    matrix,
+                    results_dir,
+                    {
+                        "datetime": started_at.isoformat().replace("+00:00", "Z"),
+                        "model-hosting": args.model_hosting,
+                        "iterations": args.iterations,
+                        "query": args.query,
+                        "network": "vnet" if use_vnet else "public",
+                        "sandbox-group": settings.sandbox_group,
+                    },
+                )
+                print(f"  ↳ wrote {summary}")
+                report = write_report(results_dir)
+                print(f"  ↳ wrote {report}")
+            except Exception as error:  # noqa: BLE001 - result recovery must not mask the run failure
+                print(f"WARNING: could not finalize benchmark results: {error}")
+
         if sandbox is not None and not args.keep_sandbox:
             try:
                 sandbox.delete()
