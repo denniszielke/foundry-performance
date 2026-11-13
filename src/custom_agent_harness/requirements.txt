@@ -1,8 +1,8 @@
 # Interactive Agent Framework harness console.
-agent-framework-core==1.16.0
-agent-framework-foundry==1.11.0
-mcp==1.28.1
-azure-identity==1.26.0b2
-python-dotenv==1.2.3
+agent-framework-core==1.24.0
+agent-framework-foundry==1.16.0
+mcp==2.3.0
+azure-identity==1.27.0
+python-dotenv==1.2.4
 textual==8.2.8
 rich==15.0.0

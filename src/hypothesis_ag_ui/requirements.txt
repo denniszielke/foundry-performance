@@ -1,5 +1,5 @@
-azure-identity==1.26.0b2
-fastapi==0.141.1
+azure-identity==1.27.0
+fastapi==0.162.0
 httpx==0.28.1
-python-dotenv==1.2.3
-uvicorn==0.52.4
+python-dotenv==1.2.4
+uvicorn==0.54.0

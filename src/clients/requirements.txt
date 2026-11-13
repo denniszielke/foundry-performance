@@ -1,5 +1,5 @@
 # Benchmark clients — HTTP + WebSocket transports.
 
 httpx==0.28.1
-websockets==17.1
-azure-identity==1.26.0b2
+websockets==17.4
+azure-identity==1.27.0

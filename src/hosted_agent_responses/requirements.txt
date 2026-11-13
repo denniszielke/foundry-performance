@@ -3,17 +3,17 @@
 # ResponsesHostServer (wraps azure-ai-agentserver-responses; no custom
 # response handler needed).
 
-agent-framework-core==1.16.0
-agent-framework-foundry==1.11.0
-agent-framework-openai==1.14.1
+agent-framework-core==1.24.0
+agent-framework-foundry==1.16.0
+agent-framework-openai==1.18.0
 
 # Built-in responses protocol host (POST /responses). Pulls in
 # azure-ai-agentserver-core/-responses transitively.
-agent-framework-foundry-hosting==1.0.0b260827
+agent-framework-foundry-hosting==1.0.0b261030
 
 # MCP client used by Agent Framework to reach the Foundry toolbox endpoint.
 # Not pulled in transitively by the pins above.
-mcp==1.28.1
+mcp==2.3.0
 
 # No a2a-sdk here: Foundry fronts A2A natively for hosted agents that
 # implement the responses protocol (enabled via
@@ -21,6 +21,6 @@ mcp==1.28.1
 # https://learn.microsoft.com/azure/foundry/agents/how-to/enable-agent-to-agent-endpoint
 
 # Azure SDKs + telemetry
-azure-identity==1.26.0b2
-azure-monitor-opentelemetry==1.8.9
-python-dotenv==1.2.3
+azure-identity==1.27.0
+azure-monitor-opentelemetry==1.8.12
+python-dotenv==1.2.4
