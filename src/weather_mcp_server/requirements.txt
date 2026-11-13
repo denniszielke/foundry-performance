@@ -1,11 +1,10 @@
 # Weather MCP server — streamable-HTTP MCP tool surface.
-# Pinned to the same dependency set the repository already used for its MCP
-# server, minus the authentication packages (this server runs anonymous).
+# No authentication packages are needed (this server runs anonymous).
 
-fastmcp==4.0.0b5
-mcp==2.1.1
-starlette==1.6.0
-uvicorn==0.52.4
+fastmcp==4.1.4
+mcp==2.3.0
+starlette==1.10.0
+uvicorn==0.54.0
 
 # Optional Application Insights instrumentation
-azure-monitor-opentelemetry==1.8.9
+azure-monitor-opentelemetry==1.8.12
